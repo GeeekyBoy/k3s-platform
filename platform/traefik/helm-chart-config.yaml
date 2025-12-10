@@ -1,0 +1,14 @@
+# Traefik HelmChartConfig for K3s
+# Enables ExternalName service support for KEDA HTTP Add-on routing
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    providers:
+      kubernetesIngress:
+        allowExternalNameServices: true
+      kubernetesCRD:
+        allowExternalNameServices: true
