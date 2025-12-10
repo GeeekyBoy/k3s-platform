@@ -1,0 +1,1259 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: serverless-example-hello-world
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: hello_world
+    k3sfn.io/trigger: http
+  name: serverless-example-hello-world
+  namespace: apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serverless-example-hello-world
+  template:
+    metadata:
+      labels:
+        app: serverless-example-hello-world
+        k3sfn.io/app: serverless-example
+        k3sfn.io/function: hello_world
+    spec:
+      containers:
+      - args:
+        - functions
+        command:
+        - python
+        - -m
+        - k3sfn.runtime
+        env:
+        - name: K3SFN_FUNCTION
+          value: hello_world
+        - name: PORT
+          value: '8080'
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        name: function
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 100m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+      imagePullSecrets:
+      - name: artifact-registry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: serverless-example-hello-world
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: hello_world
+  name: serverless-example-hello-world
+  namespace: apps
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: serverless-example-hello-world
+---
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  labels:
+    app: serverless-example-hello-world
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: hello_world
+  name: serverless-example-hello-world
+  namespace: apps
+spec:
+  hosts:
+  - serverless-example-hello-world.apps
+  replicas:
+    max: 10
+    min: 0
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: serverless-example-hello-world
+    port: 80
+    service: serverless-example-hello-world
+  scalingMetric:
+    requestRate:
+      granularity: 1s
+      targetValue: 100
+      window: 1m
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app: serverless-example-hello-world
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: hello_world
+    k3sfn.io/visibility: public
+  name: serverless-example-hello-world-ingress
+  namespace: apps
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+    ports:
+    - port: 8080
+      protocol: TCP
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: keda
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: serverless-example-hello-world
+  policyTypes:
+  - Ingress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: serverless-example-process-data
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_data
+    k3sfn.io/trigger: http
+  name: serverless-example-process-data
+  namespace: apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serverless-example-process-data
+  template:
+    metadata:
+      labels:
+        app: serverless-example-process-data
+        k3sfn.io/app: serverless-example
+        k3sfn.io/function: process_data
+    spec:
+      containers:
+      - args:
+        - functions
+        command:
+        - python
+        - -m
+        - k3sfn.runtime
+        env:
+        - name: K3SFN_FUNCTION
+          value: process_data
+        - name: PORT
+          value: '8080'
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        name: function
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 200m
+            memory: 512Mi
+          requests:
+            cpu: 200m
+            memory: 512Mi
+      imagePullSecrets:
+      - name: artifact-registry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: serverless-example-process-data
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_data
+  name: serverless-example-process-data
+  namespace: apps
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: serverless-example-process-data
+---
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  labels:
+    app: serverless-example-process-data
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_data
+  name: serverless-example-process-data
+  namespace: apps
+spec:
+  hosts:
+  - serverless-example-process-data.apps
+  replicas:
+    max: 20
+    min: 0
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: serverless-example-process-data
+    port: 80
+    service: serverless-example-process-data
+  scalingMetric:
+    requestRate:
+      granularity: 1s
+      targetValue: 100
+      window: 1m
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app: serverless-example-process-data
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_data
+    k3sfn.io/visibility: internal
+  name: serverless-example-process-data-ingress
+  namespace: apps
+spec:
+  ingress:
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: serverless-example-process-data
+  policyTypes:
+  - Ingress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: serverless-example-analyze-content
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: analyze_content
+    k3sfn.io/trigger: http
+  name: serverless-example-analyze-content
+  namespace: apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serverless-example-analyze-content
+  template:
+    metadata:
+      labels:
+        app: serverless-example-analyze-content
+        k3sfn.io/app: serverless-example
+        k3sfn.io/function: analyze_content
+    spec:
+      containers:
+      - args:
+        - functions
+        command:
+        - python
+        - -m
+        - k3sfn.runtime
+        env:
+        - name: K3SFN_FUNCTION
+          value: analyze_content
+        - name: PORT
+          value: '8080'
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        name: function
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+      imagePullSecrets:
+      - name: artifact-registry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: serverless-example-analyze-content
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: analyze_content
+  name: serverless-example-analyze-content
+  namespace: apps
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: serverless-example-analyze-content
+---
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  labels:
+    app: serverless-example-analyze-content
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: analyze_content
+  name: serverless-example-analyze-content
+  namespace: apps
+spec:
+  hosts:
+  - serverless-example-analyze-content.apps
+  replicas:
+    max: 5
+    min: 0
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: serverless-example-analyze-content
+    port: 80
+    service: serverless-example-analyze-content
+  scalingMetric:
+    requestRate:
+      granularity: 1s
+      targetValue: 100
+      window: 1m
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app: serverless-example-analyze-content
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: analyze_content
+    k3sfn.io/visibility: restricted
+  name: serverless-example-analyze-content-ingress
+  namespace: apps
+spec:
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: fastapi
+    ports:
+    - port: 8080
+      protocol: TCP
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: keda
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: serverless-example-analyze-content
+  policyTypes:
+  - Ingress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: serverless-example-random-animal
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: random_animal
+    k3sfn.io/trigger: http
+  name: serverless-example-random-animal
+  namespace: apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serverless-example-random-animal
+  template:
+    metadata:
+      labels:
+        app: serverless-example-random-animal
+        k3sfn.io/app: serverless-example
+        k3sfn.io/function: random_animal
+    spec:
+      containers:
+      - args:
+        - functions
+        command:
+        - python
+        - -m
+        - k3sfn.runtime
+        env:
+        - name: K3SFN_FUNCTION
+          value: random_animal
+        - name: PORT
+          value: '8080'
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        name: function
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 50m
+            memory: 128Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+      imagePullSecrets:
+      - name: artifact-registry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: serverless-example-random-animal
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: random_animal
+  name: serverless-example-random-animal
+  namespace: apps
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: serverless-example-random-animal
+---
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  labels:
+    app: serverless-example-random-animal
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: random_animal
+  name: serverless-example-random-animal
+  namespace: apps
+spec:
+  hosts:
+  - serverless-example-random-animal.apps
+  replicas:
+    max: 10
+    min: 0
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: serverless-example-random-animal
+    port: 80
+    service: serverless-example-random-animal
+  scalingMetric:
+    requestRate:
+      granularity: 1s
+      targetValue: 100
+      window: 1m
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app: serverless-example-random-animal
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: random_animal
+    k3sfn.io/visibility: public
+  name: serverless-example-random-animal-ingress
+  namespace: apps
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+    ports:
+    - port: 8080
+      protocol: TCP
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: keda
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: serverless-example-random-animal
+  policyTypes:
+  - Ingress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: serverless-example-health-check
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: health_check
+    k3sfn.io/trigger: http
+  name: serverless-example-health-check
+  namespace: apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serverless-example-health-check
+  template:
+    metadata:
+      labels:
+        app: serverless-example-health-check
+        k3sfn.io/app: serverless-example
+        k3sfn.io/function: health_check
+    spec:
+      containers:
+      - args:
+        - functions
+        command:
+        - python
+        - -m
+        - k3sfn.runtime
+        env:
+        - name: K3SFN_FUNCTION
+          value: health_check
+        - name: PORT
+          value: '8080'
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        name: function
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 100m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+      imagePullSecrets:
+      - name: artifact-registry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: serverless-example-health-check
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: health_check
+  name: serverless-example-health-check
+  namespace: apps
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: serverless-example-health-check
+---
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  labels:
+    app: serverless-example-health-check
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: health_check
+  name: serverless-example-health-check
+  namespace: apps
+spec:
+  hosts:
+  - serverless-example-health-check.apps
+  replicas:
+    max: 50
+    min: 1
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: serverless-example-health-check
+    port: 80
+    service: serverless-example-health-check
+  scalingMetric:
+    requestRate:
+      granularity: 1s
+      targetValue: 100
+      window: 1m
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app: serverless-example-health-check
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: health_check
+    k3sfn.io/visibility: public
+  name: serverless-example-health-check-ingress
+  namespace: apps
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+    ports:
+    - port: 8080
+      protocol: TCP
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: keda
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: serverless-example-health-check
+  policyTypes:
+  - Ingress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: serverless-example-process-tasks
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_tasks
+    k3sfn.io/trigger: queue
+  name: serverless-example-process-tasks
+  namespace: apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serverless-example-process-tasks
+  template:
+    metadata:
+      labels:
+        app: serverless-example-process-tasks
+        k3sfn.io/app: serverless-example
+        k3sfn.io/function: process_tasks
+    spec:
+      containers:
+      - args:
+        - functions
+        command:
+        - python
+        - -m
+        - k3sfn.runtime
+        env:
+        - name: K3SFN_FUNCTION
+          value: process_tasks
+        - name: PORT
+          value: '8080'
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        name: function
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 200m
+            memory: 512Mi
+          requests:
+            cpu: 200m
+            memory: 512Mi
+      imagePullSecrets:
+      - name: artifact-registry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: serverless-example-process-tasks
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_tasks
+  name: serverless-example-process-tasks
+  namespace: apps
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: serverless-example-process-tasks
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  labels:
+    app: serverless-example-process-tasks
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_tasks
+  name: serverless-example-process-tasks
+  namespace: apps
+spec:
+  cooldownPeriod: 300
+  maxReplicaCount: 10
+  minReplicaCount: 0
+  pollingInterval: 30
+  scaleTargetRef:
+    name: serverless-example-process-tasks
+  triggers:
+  - authenticationRef:
+      name: valkey-auth
+    metadata:
+      addresses: valkey.apps.svc.cluster.local:26379
+      databaseIndex: '0'
+      enableTLS: 'false'
+      listLength: '25'
+      listName: queue:tasks
+      sentinelMaster: myprimary
+    type: redis-sentinel
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app: serverless-example-process-tasks
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_tasks
+    k3sfn.io/visibility: private
+  name: serverless-example-process-tasks-ingress
+  namespace: apps
+spec:
+  ingress:
+  - from:
+    - podSelector: {}
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: serverless-example-process-tasks
+  policyTypes:
+  - Ingress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: serverless-example-send-emails
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: send_emails
+    k3sfn.io/trigger: queue
+  name: serverless-example-send-emails
+  namespace: apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serverless-example-send-emails
+  template:
+    metadata:
+      labels:
+        app: serverless-example-send-emails
+        k3sfn.io/app: serverless-example
+        k3sfn.io/function: send_emails
+    spec:
+      containers:
+      - args:
+        - functions
+        command:
+        - python
+        - -m
+        - k3sfn.runtime
+        env:
+        - name: K3SFN_FUNCTION
+          value: send_emails
+        - name: PORT
+          value: '8080'
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        name: function
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 250m
+            memory: 1Gi
+          requests:
+            cpu: 250m
+            memory: 1Gi
+      imagePullSecrets:
+      - name: artifact-registry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: serverless-example-send-emails
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: send_emails
+  name: serverless-example-send-emails
+  namespace: apps
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: serverless-example-send-emails
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  labels:
+    app: serverless-example-send-emails
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: send_emails
+  name: serverless-example-send-emails
+  namespace: apps
+spec:
+  cooldownPeriod: 300
+  maxReplicaCount: 5
+  minReplicaCount: 0
+  pollingInterval: 30
+  scaleTargetRef:
+    name: serverless-example-send-emails
+  triggers:
+  - authenticationRef:
+      name: valkey-auth
+    metadata:
+      addresses: valkey.apps.svc.cluster.local:26379
+      databaseIndex: '0'
+      enableTLS: 'false'
+      listLength: '5'
+      listName: queue:emails
+      sentinelMaster: myprimary
+    type: redis-sentinel
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app: serverless-example-send-emails
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: send_emails
+    k3sfn.io/visibility: private
+  name: serverless-example-send-emails-ingress
+  namespace: apps
+spec:
+  ingress:
+  - from:
+    - podSelector: {}
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: serverless-example-send-emails
+  policyTypes:
+  - Ingress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: serverless-example-process-images
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_images
+    k3sfn.io/trigger: queue
+  name: serverless-example-process-images
+  namespace: apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serverless-example-process-images
+  template:
+    metadata:
+      labels:
+        app: serverless-example-process-images
+        k3sfn.io/app: serverless-example
+        k3sfn.io/function: process_images
+    spec:
+      containers:
+      - args:
+        - functions
+        command:
+        - python
+        - -m
+        - k3sfn.runtime
+        env:
+        - name: K3SFN_FUNCTION
+          value: process_images
+        - name: PORT
+          value: '8080'
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        name: function
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: '1'
+            memory: 2Gi
+          requests:
+            cpu: '1'
+            memory: 2Gi
+      imagePullSecrets:
+      - name: artifact-registry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: serverless-example-process-images
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_images
+  name: serverless-example-process-images
+  namespace: apps
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: serverless-example-process-images
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  labels:
+    app: serverless-example-process-images
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_images
+  name: serverless-example-process-images
+  namespace: apps
+spec:
+  cooldownPeriod: 300
+  maxReplicaCount: 3
+  minReplicaCount: 0
+  pollingInterval: 30
+  scaleTargetRef:
+    name: serverless-example-process-images
+  triggers:
+  - authenticationRef:
+      name: valkey-auth
+    metadata:
+      addresses: valkey.apps.svc.cluster.local:26379
+      databaseIndex: '0'
+      enableTLS: 'false'
+      listLength: '5'
+      listName: queue:images
+      sentinelMaster: myprimary
+    type: redis-sentinel
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app: serverless-example-process-images
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: process_images
+    k3sfn.io/visibility: private
+  name: serverless-example-process-images-ingress
+  namespace: apps
+spec:
+  ingress:
+  - from:
+    - podSelector: {}
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: serverless-example-process-images
+  policyTypes:
+  - Ingress
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  labels:
+    app: serverless-example-hourly-metrics
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: hourly_metrics
+  name: serverless-example-hourly-metrics
+  namespace: apps
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - args:
+            - from functions import *; import asyncio; asyncio.run(hourly_metrics(None))
+            command:
+            - python
+            - -c
+            env:
+            - name: K3SFN_FUNCTION
+              value: hourly_metrics
+            image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+            name: function
+            resources:
+              limits:
+                cpu: 100m
+                memory: 256Mi
+              requests:
+                cpu: 100m
+                memory: 256Mi
+          imagePullSecrets:
+          - name: artifact-registry
+          restartPolicy: OnFailure
+  schedule: 0 * * * *
+  timeZone: UTC
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  labels:
+    app: serverless-example-daily-cleanup
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: daily_cleanup
+  name: serverless-example-daily-cleanup
+  namespace: apps
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - args:
+            - from functions import *; import asyncio; asyncio.run(daily_cleanup(None))
+            command:
+            - python
+            - -c
+            env:
+            - name: K3SFN_FUNCTION
+              value: daily_cleanup
+            image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+            name: function
+            resources:
+              limits:
+                cpu: 200m
+                memory: 512Mi
+              requests:
+                cpu: 200m
+                memory: 512Mi
+          imagePullSecrets:
+          - name: artifact-registry
+          restartPolicy: OnFailure
+  schedule: 0 0 * * *
+  timeZone: UTC
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  labels:
+    app: serverless-example-weekly-report
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: weekly_report
+  name: serverless-example-weekly-report
+  namespace: apps
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - args:
+            - from functions import *; import asyncio; asyncio.run(weekly_report(None))
+            command:
+            - python
+            - -c
+            env:
+            - name: K3SFN_FUNCTION
+              value: weekly_report
+            image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+            name: function
+            resources:
+              limits:
+                cpu: 500m
+                memory: 1Gi
+              requests:
+                cpu: 500m
+                memory: 1Gi
+          imagePullSecrets:
+          - name: artifact-registry
+          restartPolicy: OnFailure
+  schedule: 0 6 * * 1
+  timeZone: America/New_York
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  labels:
+    app: serverless-example-hello-world
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: hello_world
+  name: serverless-example-hello-world-host-rewrite
+  namespace: apps
+spec:
+  headers:
+    customRequestHeaders:
+      Host: serverless-example-hello-world.apps
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  labels:
+    app: serverless-example-random-animal
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: random_animal
+  name: serverless-example-random-animal-host-rewrite
+  namespace: apps
+spec:
+  headers:
+    customRequestHeaders:
+      Host: serverless-example-random-animal.apps
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  labels:
+    app: serverless-example-health-check
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: health_check
+  name: serverless-example-health-check-host-rewrite
+  namespace: apps
+spec:
+  headers:
+    customRequestHeaders:
+      Host: serverless-example-health-check.apps
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  labels:
+    k3sfn.io/app: serverless-example
+  name: serverless-example-routes
+  namespace: apps
+spec:
+  entryPoints:
+  - web
+  - websecure
+  routes:
+  - kind: Rule
+    match: PathPrefix(`/api/hello`)
+    middlewares:
+    - name: serverless-example-hello-world-host-rewrite
+      namespace: apps
+    services:
+    - name: keda-add-ons-http-interceptor-proxy
+      namespace: keda
+      port: 8080
+  - kind: Rule
+    match: PathPrefix(`/api/animal`)
+    middlewares:
+    - name: serverless-example-random-animal-host-rewrite
+      namespace: apps
+    services:
+    - name: keda-add-ons-http-interceptor-proxy
+      namespace: keda
+      port: 8080
+  - kind: Rule
+    match: PathPrefix(`/api/health`)
+    middlewares:
+    - name: serverless-example-health-check-host-rewrite
+      namespace: apps
+    services:
+    - name: keda-add-ons-http-interceptor-proxy
+      namespace: keda
+      port: 8080

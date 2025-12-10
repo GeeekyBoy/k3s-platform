@@ -1,0 +1,26 @@
+# Cloud Build configuration for serverless-example
+# Triggered from project root: gcloud builds submit --config=apps/serverless-example/cloudbuild.yaml .
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGISTRY}/${_APP_NAME}:${_TAG}'
+      - '-t'
+      - '${_REGISTRY}/${_APP_NAME}:latest'
+      - '-f'
+      - 'apps/serverless-example/Dockerfile'
+      - '.'
+
+images:
+  - '${_REGISTRY}/${_APP_NAME}:${_TAG}'
+  - '${_REGISTRY}/${_APP_NAME}:latest'
+
+substitutions:
+  _REGISTRY: 'us-central1-docker.pkg.dev/bloompath-canary/k3s-platform'
+  _APP_NAME: 'serverless-example'
+  _TAG: '${SHORT_SHA}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

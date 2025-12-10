@@ -1,14 +1,18 @@
 # Auto-generated from apps.yaml - DO NOT EDIT MANUALLY
-# Regenerate with: ./scripts/generate-argocd-state.sh local
+# Regenerate with: ./scripts/generate-argocd-state.sh gcp
+#
+# NOTE: You must build and push the image before ArgoCD can deploy this:
+#   docker build -t us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest apps/serverless-example
+#   docker push us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: apps
+  name: serverless-example
   namespace: argocd
   labels:
     app.kubernetes.io/part-of: k3s-platform
-    environment: local
-    type: kustomize
+    environment: gcp
+    type: serverless
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
@@ -16,12 +20,10 @@ spec:
   source:
     repoURL: https://github.com/GeeekyBoy/k3s-platform.git
     targetRevision: HEAD
-    path: k8s/overlays/local
-    kustomize:
-      # Image substitutions generated from apps.yaml and configs/.env
-      # Base images are mapped to environment-specific registry
-      images:
-      - fastapi-app=k3s-platform/fastapi:latest
+    path: argocd-state/gcp/serverless/serverless-example
+    directory:
+      recurse: false
+      include: 'manifests.yaml'
   destination:
     server: https://kubernetes.default.svc
     namespace: apps

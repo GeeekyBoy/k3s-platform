@@ -6,6 +6,7 @@ kind: Kustomization
 resources:
   - project.yaml
   - apps-kustomize.yaml
+  - serverless-example-serverless.yaml
   - valkey.yaml
 
 labels:

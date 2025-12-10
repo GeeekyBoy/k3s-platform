@@ -47,6 +47,9 @@ vendor/
 .tilt-dev/
 tilt_modules/
 
+# Serverless generated files (should be in argocd-state, not in app dirs)
+apps/*/generated/
+
 # Secrets (never commit)
 *.pem
 *.key

@@ -17,6 +17,11 @@ spec:
     repoURL: https://github.com/GeeekyBoy/k3s-platform.git
     targetRevision: HEAD
     path: k8s/overlays/gcp
+    kustomize:
+      # Image substitutions generated from apps.yaml and configs/.env
+      # Base images are mapped to environment-specific registry
+      images:
+      - fastapi-app=us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/fastapi:latest
   destination:
     server: https://kubernetes.default.svc
     namespace: apps
