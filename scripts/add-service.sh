@@ -1,6 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
+#===============================================================================
+# Add New Traditional Service
+#
+# Creates scaffolding for a new traditional service (Dockerfile-based).
+# Generates application code, Dockerfile, and Kubernetes manifests.
+#
+# For serverless functions, use: ./scripts/new-serverless-app.sh
+#
+# Usage:
+#   ./scripts/add-service.sh <service-name> [options]
+#
+# Examples:
+#   ./scripts/add-service.sh my-api --port 3000 --lang node
+#   ./scripts/add-service.sh worker --replicas 3 --lang python
+#   ./scripts/add-service.sh frontend --port 80 --image nginx:latest
+#===============================================================================
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -298,9 +315,14 @@ EOF
         ;;
 esac
 
-# Replace placeholders in all files
-find "${APP_DIR}" -type f -exec sed -i "s/SERVICE_PORT_PLACEHOLDER/${SERVICE_PORT}/g" {} \;
-find "${APP_DIR}" -type f -exec sed -i "s/SERVICE_NAME_PLACEHOLDER/${SERVICE_NAME}/g" {} \;
+# Replace placeholders in all files (cross-platform)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    find "${APP_DIR}" -type f -exec sed -i '' "s/SERVICE_PORT_PLACEHOLDER/${SERVICE_PORT}/g" {} \;
+    find "${APP_DIR}" -type f -exec sed -i '' "s/SERVICE_NAME_PLACEHOLDER/${SERVICE_NAME}/g" {} \;
+else
+    find "${APP_DIR}" -type f -exec sed -i "s/SERVICE_PORT_PLACEHOLDER/${SERVICE_PORT}/g" {} \;
+    find "${APP_DIR}" -type f -exec sed -i "s/SERVICE_NAME_PLACEHOLDER/${SERVICE_NAME}/g" {} \;
+fi
 
 #═══════════════════════════════════════════════════════════════════════════════
 # Create Kubernetes manifests
@@ -400,11 +422,15 @@ KUSTOMIZE_FILE="${PROJECT_ROOT}/k8s/base/kustomization.yaml"
 
 # Add new resources if not already present
 if ! grep -q "${SERVICE_NAME}/deployment.yaml" "${KUSTOMIZE_FILE}"; then
-    # Add before the last resource entry
-    sed -i '' "/^resources:/a\\
+    # Add the new resources to kustomization.yaml (cross-platform)
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "/^resources:/a\\
   - ${SERVICE_NAME}/deployment.yaml\\
   - ${SERVICE_NAME}/service.yaml\\
   - ${SERVICE_NAME}/pdb.yaml" "${KUSTOMIZE_FILE}"
+    else
+        sed -i "/^resources:/a\\  - ${SERVICE_NAME}/deployment.yaml\n  - ${SERVICE_NAME}/service.yaml\n  - ${SERVICE_NAME}/pdb.yaml" "${KUSTOMIZE_FILE}"
+    fi
     log_info "Updated kustomization.yaml"
 fi
 

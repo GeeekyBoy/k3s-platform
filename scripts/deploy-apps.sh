@@ -2,15 +2,18 @@
 set -euo pipefail
 
 #===============================================================================
-# Application Deployment from Configuration
+# Direct Application Deployment
 #
-# Unified deployment script that works for both local and GCP environments.
-# Like "docker compose up" but reads apps.yaml instead.
-# NO per-service scripts needed - just edit apps.yaml!
+# Deploys applications directly to the cluster without ArgoCD.
+# Useful for quick testing, CI/CD pipelines, or debugging.
+#
+# For GitOps deployments, use:
+#   ./scripts/generate-argocd-state.sh [local|gcp]
 #
 # Usage:
-#   ./scripts/deploy-apps.sh           # Uses configs/.env
-#   PLATFORM_ENV=local ./scripts/deploy-apps.sh  # Force local mode
+#   ./scripts/deploy-apps.sh                       # Uses configs/.env
+#   PLATFORM_ENV=local ./scripts/deploy-apps.sh   # Force local mode
+#   PLATFORM_ENV=gcp ./scripts/deploy-apps.sh     # Force GCP mode
 #===============================================================================
 
 # Colors

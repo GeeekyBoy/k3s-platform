@@ -1,12 +1,20 @@
-# Environment files
+# K3s Platform .gitignore
+# ==============================================================================
+
+# Environment files (secrets)
 configs/.env
 .env
 .env.local
 
-# Kubernetes configs
+# Kubernetes configs (sensitive)
 *.kubeconfig
 kubeconfig
 k3s.yaml
+*-kubeconfig
+
+# GCP credentials
+*.json
+!apps/*/cloudbuild.yaml
 
 # Build artifacts
 *.log
@@ -20,6 +28,7 @@ tmp/
 *.swp
 *.swo
 *~
+*.bak
 
 # OS
 .DS_Store
@@ -33,6 +42,9 @@ __pycache__/
 venv/
 .venv/
 *.egg-info/
+.eggs/
+dist/
+build/
 
 # Node
 node_modules/
@@ -47,11 +59,18 @@ vendor/
 .tilt-dev/
 tilt_modules/
 
-# Serverless generated files (should be in argocd-state, not in app dirs)
+# Serverless generated files in app directories (auto-generated during dev)
+# NOTE: argocd-state/ is NOT ignored - it must be committed for GitOps
 apps/*/generated/
 
-# Secrets (never commit)
-*.pem
-*.key
-*secret*
-credentials.json
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
+
+# Local development
+*.local
+
+# Backups
+*.backup

@@ -1,58 +1,57 @@
-# Application Deployments Configuration
-# ================================================================================
-# This file configures all applications across three environments:
-#   - dev:   Local development with hot-reload (Tilt)
-#   - local: On-premises production-like deployment (k3d without hot-reload)
-#   - gcp:   Cloud production deployment (GCP with full autoscaling)
+# K3s Platform - Application Configuration
+# ==============================================================================
+# This file is the single source of truth for all deployments.
 #
-# Add/remove services by enabling/disabling entries below.
-# No Tiltfile or script changes needed!
-# ================================================================================
+# Environments:
+#   - dev:   Local development with Tilt hot-reload
+#   - local: On-premises production-like deployment (k3d + ArgoCD)
+#   - gcp:   Cloud production deployment (GCP + ArgoCD)
+#
+# Deployment Types:
+#   - helm:       Third-party Helm charts (databases, etc.)
+#   - kustomize:  Your services deployed via k8s/overlays
+#   - serverless: k3sfn functions with scale-to-zero
+#   - apps:       Traditional container applications
+#
+# To add/remove services, just enable/disable entries below.
+# No script or Tiltfile changes needed!
+# ==============================================================================
 
-# Helm Charts (for third-party services like databases)
+# Helm Charts (third-party services)
 helm:
   - name: valkey
     chart: bitnami/valkey
-    version: "5.0.10"  # Pin to specific stable version
+    version: "5.0.10"
     namespace: apps
     values: apps/valkey/values.yaml
     enabled: true
-    # Environment overrides (optional)
-    # env:
-    #   dev:
-    #     values: apps/valkey/values-dev.yaml
-    #   local:
-    #     enabled: false  # Use external Valkey
 
-# Kustomize (deploys your services from k8s/base via overlays)
-# The overlay is auto-selected based on environment
+# Kustomize Deployments (your apps via k8s/base + overlays)
+# The overlay is auto-selected based on environment (dev, local, gcp)
 kustomize:
   - name: apps
     path: k8s/overlays/${PLATFORM_ENV}
     enabled: true
 
-# Serverless Functions (k3sfn apps with @serverless decorators)
-# Each app gets its functions discovered, built, and deployed automatically
+# Serverless Functions (k3sfn with @http, @queue, @schedule decorators)
+# Functions are discovered automatically, built, and deployed with scale-to-zero
 serverless:
   - name: serverless-example
     path: apps/serverless-example
     namespace: apps
     enabled: true
-    # Dev mode settings (hot-reload, port forwards)
     dev:
-      port_base: 8081  # Functions get ports 8081, 8082, 8083...
+      port_base: 8081
       live_update: true
 
-# Traditional container apps (FastAPI, etc.)
-# These are built from source and deployed as Deployments
+# Traditional Container Apps (Dockerfile-based)
 apps:
   - name: fastapi
     path: apps/fastapi
     namespace: apps
     enabled: true
     dockerfile: Dockerfile
-    dockerfile_dev: Dockerfile.dev  # For dev environment with hot-reload
-    # Dev mode settings
+    dockerfile_dev: Dockerfile.dev
     dev:
       port: 8000
       live_update: true
@@ -60,7 +59,7 @@ apps:
         - src: src/
           dest: /app/src/
 
+# Helm Repository URLs
 repositories:
-  # Bitnami uses OCI registry (required for ArgoCD compatibility)
   bitnami: oci://registry-1.docker.io/bitnamicharts
   kedacore: https://kedacore.github.io/charts

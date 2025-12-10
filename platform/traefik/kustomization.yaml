@@ -1,0 +1,7 @@
+# Traefik Configuration for K3s
+# These configs modify the bundled K3s Traefik installation
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - helm-chart-config.yaml

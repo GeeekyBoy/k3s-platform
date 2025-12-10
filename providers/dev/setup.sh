@@ -165,17 +165,20 @@ install_traefik() {
     helm repo add traefik https://traefik.github.io/charts 2>/dev/null || true
     helm repo update traefik
 
+    # Enable ExternalName services for KEDA HTTP Add-on routing
     helm upgrade --install traefik traefik/traefik \
         --namespace kube-system \
         --set ports.web.nodePort=30080 \
         --set ports.websecure.nodePort=30443 \
         --set service.type=NodePort \
         --set providers.kubernetesIngress.enabled=true \
+        --set providers.kubernetesIngress.allowExternalNameServices=true \
         --set providers.kubernetesCRD.enabled=true \
+        --set providers.kubernetesCRD.allowExternalNameServices=true \
         --set logs.general.level=DEBUG \
         --wait
 
-    log_success "Traefik installed (DEBUG logging for dev)"
+    log_success "Traefik installed (DEBUG logging, ExternalName services enabled)"
 }
 
 install_keda() {

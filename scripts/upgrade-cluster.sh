@@ -1,6 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
+#===============================================================================
+# K3s Cluster Upgrade Management
+#
+# Manages K3s cluster upgrades using the system-upgrade-controller.
+# Supports zero-downtime upgrades of both control plane and worker nodes.
+#
+# Usage:
+#   ./scripts/upgrade-cluster.sh status       # Show current versions
+#   ./scripts/upgrade-cluster.sh apply        # Apply upgrade plans
+#   ./scripts/upgrade-cluster.sh version VER  # Set specific version
+#   ./scripts/upgrade-cluster.sh channel CH   # Set release channel
+#   ./scripts/upgrade-cluster.sh pause        # Pause upgrades
+#   ./scripts/upgrade-cluster.sh resume       # Resume upgrades
+#===============================================================================
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'

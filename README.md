@@ -1,315 +1,245 @@
 # K3s Platform
 
-Production-ready Kubernetes platform using K3s with GCP integration.
+Production-ready Kubernetes platform with K3s, supporting development, on-premises, and cloud deployments.
 
-**Simple like Docker Compose:** Edit `apps.yaml` to add/remove services. No scripts to modify!
+**Configuration-Driven:** Edit `apps.yaml` to add/remove services. No scripts to modify!
+
+## Environments
+
+| Environment | Purpose | Setup | Deployment |
+|-------------|---------|-------|------------|
+| **dev** | Development with hot-reload | `./providers/dev/setup.sh` | Tilt |
+| **local** | On-premises production-like | `./providers/local/setup.sh` | ArgoCD |
+| **gcp** | Cloud production | `./providers/gcp/deploy.sh` | ArgoCD |
 
 ## Quick Start
 
-### 1. Configure (One Time)
+### Development (with Tilt hot-reload)
 
 ```bash
-# Copy and edit configuration
-cp configs/.env.example configs/.env
+# 1. Setup cluster and start Tilt
+./providers/dev/setup.sh
+
+# 2. Open Tilt UI at http://localhost:10350
+# 3. Edit code, see changes instantly!
+```
+
+### Local Production-Like (with ArgoCD)
+
+```bash
+# 1. Setup cluster
+./providers/local/setup.sh
+
+# 2. Generate ArgoCD state and push to git
+./scripts/generate-argocd-state.sh local
+git add . && git commit -m "Update apps" && git push
+
+# 3. ArgoCD auto-syncs your changes
+```
+
+### GCP Cloud Deployment
+
+```bash
+# 1. Configure GCP settings
+cp configs/.env.gcp.example configs/.env
 nano configs/.env  # Set your GCP project ID
-```
 
-### 2. Deploy Infrastructure + Platform
-
-```bash
-# Deploys VMs, K3s, CCM, KEDA, etc.
+# 2. Deploy everything
 ./providers/gcp/deploy.sh
+
+# 3. Update apps via GitOps
+./scripts/generate-argocd-state.sh gcp
+git add . && git commit && git push
 ```
 
-### 3. Deploy Applications
+## Deployment Types
 
-```bash
-# Edit apps.yaml to enable/disable services
-nano apps.yaml
-
-# Deploy all enabled apps
-./scripts/deploy-apps.sh
-```
-
-That's it! Your cluster is running.
-
-## Adding/Removing Services
-
-Just edit `apps.yaml`:
-
+### Helm Charts (third-party services)
 ```yaml
 helm:
-  # Enable/disable by changing this flag
   - name: valkey
     chart: bitnami/valkey
-    namespace: apps
     values: apps/valkey/values.yaml
-    enabled: true  # Set to false to disable
-
-  # Add PostgreSQL
-  - name: postgres
-    chart: bitnami/postgresql
-    namespace: apps
-    values: apps/postgres/values.yaml
     enabled: true
+```
 
+### Kustomize (your applications)
+```yaml
 kustomize:
+  - name: apps
+    path: k8s/overlays/${PLATFORM_ENV}
+    enabled: true
+```
+
+### Serverless Functions (scale-to-zero)
+```yaml
+serverless:
+  - name: serverless-example
+    path: apps/serverless-example
+    enabled: true
+```
+
+### Traditional Apps (Dockerfile-based)
+```yaml
+apps:
   - name: fastapi
-    path: k8s/overlays/gcp
+    path: apps/fastapi
     enabled: true
-
-  # Add your custom app
-  - name: backend
-    path: k8s/overlays/backend
-    enabled: true
-```
-
-Then run:
-```bash
-./scripts/deploy-apps.sh
-```
-
-**No scripts to modify. No code changes. Just configuration!**
-
-## Local Development
-
-```bash
-# Start local k3d cluster + apps with hot-reload
-cd providers/local && ./setup.sh
-cd ../.. && tilt up
-```
-
-## Features
-
-- **Simple Configuration:** Like `docker-compose.yml` but for Kubernetes
-- **No Hardcoded Apps:** Add/remove services without touching scripts
-- **Production Ready:** All K3s best practices applied
-- **Zero Downtime:** Proper health checks, rolling updates
-- **VM Scale-to-Zero:** Cluster Autoscaler scales worker VMs to 0 when idle (like Cloud Run)
-- **Pod Scale-to-Zero:** KEDA scales pods based on queue length or CPU
-- **Self-healing:** Automatic node replacement and cluster upgrades
-- **GCP Native:** Cloud Controller Manager for LoadBalancers
-- **Fast Cold Start:** Embedded registry mirror for quick image pulls
-
-## Architecture
-
-```
-GCP Infrastructure
-  ├── VPC + Subnet (auto-created)
-  ├── Service Account + IAM Roles (auto-created)
-  ├── Artifact Registry (auto-created)
-  ├── Control Plane (e2-standard-2, SSD)
-  └── Workers (MIG 0-5, scale-to-zero, SSD)
-
-K3s Platform Components
-  ├── GCP Cloud Controller Manager (LoadBalancers)
-  ├── Cluster Autoscaler (VM scale-to-zero)
-  ├── KEDA Autoscaler (pod scale-to-zero)
-  ├── System Upgrade Controller (zero-downtime upgrades)
-  └── Embedded Registry Mirror (fast image pulls)
-
-Your Applications (configured in apps.yaml)
-  ├── Helm Charts (Valkey, Postgres, etc.)
-  └── Kustomize Overlays (Your apps)
 ```
 
 ## Project Structure
 
 ```
-k8s-platform/
-├── apps.yaml                 # ← Enable/disable services (like docker-compose.yml)
-├── configs/.env              # ← Your GCP project config
+k3s-platform/
+├── apps.yaml                 # Single source of truth for all deployments
+├── configs/
+│   ├── .env.dev.example      # Dev environment config
+│   ├── .env.local.example    # Local environment config
+│   └── .env.gcp.example      # GCP environment config
 │
-├── apps/                     # Helm chart values (third-party services)
-│   └── valkey/values.yaml
+├── apps/                     # Application source code
+│   ├── fastapi/              # Traditional container app
+│   ├── serverless-example/   # Serverless functions (k3sfn)
+│   └── valkey/               # Helm chart values
 │
-├── k8s/                      # Your application manifests
-│   ├── base/                 # ← ADD YOUR SERVICES HERE
-│   │   ├── fastapi/          #   Each folder = one service
-│   │   ├── backend/          #   Just add a folder to add a service!
-│   │   └── kustomization.yaml
-│   └── overlays/
-│       ├── gcp/              # GCP patches (LoadBalancer, registry, etc.)
-│       └── local/            # Local patches (NodePort, local registry)
+├── k8s/                      # Kubernetes manifests
+│   ├── base/                 # Base manifests (add services here)
+│   └── overlays/             # Environment-specific patches
+│       ├── dev/
+│       ├── local/
+│       └── gcp/
 │
-├── providers/
-│   ├── gcp/deploy.sh         # One-command GCP deployment
-│   └── local/setup.sh        # Local k3d setup
+├── argocd-state/             # Generated ArgoCD applications (git-synced)
+│   ├── local/
+│   └── gcp/
 │
-└── scripts/deploy-apps.sh    # Deploy all enabled apps
+├── libs/
+│   └── k3sfn/                # Serverless function SDK
+│
+├── platform/                 # Platform components
+│   ├── argocd/               # ArgoCD configuration
+│   ├── cluster-autoscaler/   # VM scale-to-zero
+│   ├── gcp-ccm/              # GCP Cloud Controller Manager
+│   ├── system-upgrade-controller/
+│   └── traefik/              # Traefik configuration
+│
+├── providers/                # Environment setup scripts
+│   ├── dev/                  # Development (Tilt)
+│   ├── local/                # On-premises (ArgoCD)
+│   └── gcp/                  # Cloud (ArgoCD)
+│
+└── scripts/                  # Utility scripts
+    ├── generate-argocd-state.sh  # Generate ArgoCD manifests
+    ├── deploy-apps.sh            # Deploy apps (legacy)
+    └── new-serverless-app.sh     # Create new serverless app
 ```
 
-**Key insight:** Overlays are for ENVIRONMENTS (gcp, local), not services. Add services to `k8s/base/`.
+## Serverless Functions (k3sfn)
+
+Create serverless functions with scale-to-zero:
+
+```python
+# apps/my-app/functions/api.py
+from k3sfn import http, queue, schedule
+
+@http("/api/hello", visibility="public")
+async def hello_world(request):
+    return {"message": "Hello, World!"}
+
+@queue("tasks", visibility="private")
+async def process_task(message):
+    # Process queue message
+    pass
+
+@schedule("0 * * * *")  # Every hour
+async def hourly_job(context):
+    # Scheduled job
+    pass
+```
+
+Generate manifests and deploy:
+```bash
+./scripts/generate-argocd-state.sh gcp
+git add . && git commit && git push
+```
+
+## GitOps Workflow
+
+1. **Edit** - Modify `apps.yaml` or app code
+2. **Generate** - Run `./scripts/generate-argocd-state.sh <env>`
+3. **Push** - `git add . && git commit && git push`
+4. **Sync** - ArgoCD auto-syncs (only changed resources)
+
+## Features
+
+- **Configuration-Driven**: Add/remove services via `apps.yaml`
+- **Three Environments**: dev (Tilt), local (ArgoCD), gcp (ArgoCD)
+- **Serverless Functions**: HTTP, queue, and scheduled triggers with scale-to-zero
+- **GitOps Ready**: ArgoCD for incremental deployments
+- **VM Scale-to-Zero**: Cluster Autoscaler scales workers to 0 when idle
+- **Pod Scale-to-Zero**: KEDA scales pods based on load
+- **Zero-Downtime Upgrades**: System Upgrade Controller
+- **GCP Native**: Cloud Controller Manager for LoadBalancers
+
+## Platform Components
+
+| Component | Purpose |
+|-----------|---------|
+| Traefik | Ingress controller |
+| KEDA | Pod autoscaling (scale-to-zero) |
+| KEDA HTTP Add-on | HTTP-triggered scale-to-zero |
+| ArgoCD | GitOps deployments |
+| Cluster Autoscaler | VM scale-to-zero (GCP) |
+| GCP CCM | LoadBalancer support (GCP) |
+| System Upgrade Controller | Rolling upgrades |
 
 ## Common Tasks
+
+### Add a New Serverless Function
+```bash
+# 1. Create new app from template
+./scripts/new-serverless-app.sh my-new-app
+
+# 2. Edit apps.yaml to add the app
+# 3. Generate and deploy
+./scripts/generate-argocd-state.sh gcp
+git add . && git commit && git push
+```
 
 ### View Cluster Status
 ```bash
 export KUBECONFIG=~/.kube/k3s-gcp-config
 kubectl get nodes
-kubectl get all -n apps
-```
-
-### Add a New Service (Your Code)
-
-1. Create manifests folder:
-   ```bash
-   mkdir -p k8s/base/backend
-   ```
-
-2. Add your Kubernetes manifests:
-   ```bash
-   # deployment.yaml, service.yaml, etc.
-   cat > k8s/base/backend/deployment.yaml <<EOF
-   apiVersion: apps/v1
-   kind: Deployment
-   metadata:
-     name: backend
-     namespace: apps
-   spec:
-     replicas: 2
-     selector:
-       matchLabels:
-         app: backend
-     template:
-       metadata:
-         labels:
-           app: backend
-       spec:
-         containers:
-           - name: backend
-             image: your-registry/backend:latest
-             ports:
-               - containerPort: 8080
-   EOF
-   ```
-
-3. Add to base kustomization:
-   ```bash
-   # Edit k8s/base/kustomization.yaml and add:
-   # resources:
-   #   - backend/
-   ```
-
-4. Deploy:
-   ```bash
-   ./scripts/deploy-apps.sh
-   ```
-
-**That's it!** The GCP overlay automatically includes all services from base.
-
-### Add a Third-Party Service (Helm)
-
-```bash
-# 1. Create values file
-cat > apps/mongodb/values.yaml <<EOF
-auth:
-  rootPassword: "changeme"
-EOF
-
-# 2. Add to apps.yaml
-# helm:
-#   - name: mongodb
-#     chart: bitnami/mongodb
-#     values: apps/mongodb/values.yaml
-#     enabled: true
-
-# 3. Deploy
-./scripts/deploy-apps.sh
-```
-
-### Remove a Service
-
-1. Set `enabled: false` in `apps.yaml`, or:
-   ```bash
-   helm uninstall <service-name> -n apps
-   ```
-
-### Upgrade Cluster
-
-K3s upgrades happen automatically based on `configs/upgrade-plans.yaml`. To trigger manually:
-```bash
-kubectl apply -f configs/upgrade-plans.yaml
-kubectl get plans -n system-upgrade
-```
-
-### Teardown Everything
-
-```bash
-./providers/gcp/teardown.sh
-```
-
-## Configuration Files
-
-### configs/.env
-Project-wide settings (GCP project, region, cluster name)
-
-### apps.yaml
-All application deployments (like docker-compose.yml)
-
-### apps/*/values.yaml
-Helm chart values for each service
-
-### k8s/overlays/*/
-Kustomize overlays for environment-specific configs
-
-## Why K3s?
-
-- **Lightweight:** ~70MB binary vs full Kubernetes
-- **Fast:** Optimized for edge and CI/CD
-- **Production Ready:** Used by millions of devices
-- **Full Kubernetes:** 100% upstream Kubernetes compliance
-- **Batteries Included:** Traefik ingress, Helm controller, etc.
-
-## Best Practices Applied
-
-- ✅ Embedded registry mirror for fast cold starts
-- ✅ Systemd reliability checks
-- ✅ Proper kubeconfig permissions (600)
-- ✅ Short-lived access tokens (no SA key files)
-- ✅ Health checks between deployment steps
-- ✅ Sequential bootstrap with retry logic
-- ✅ Zero-downtime rolling updates
-- ✅ Configuration-driven (no hardcoded apps)
-- ✅ SSD for all nodes (reliability)
-- ✅ Auto-scaling workers (1-5)
-- ✅ Pod Disruption Budgets
-- ✅ Comprehensive tolerations
-- ✅ Network policies
-- ✅ Security contexts
-
-## Troubleshooting
-
-### Cluster not accessible?
-```bash
-export KUBECONFIG=~/.kube/k3s-gcp-config
-kubectl cluster-info
-```
-
-### App deployment failed?
-```bash
 kubectl get pods -n apps
-kubectl logs -f <pod-name> -n apps
-kubectl describe pod <pod-name> -n apps
+kubectl get applications -n argocd
 ```
 
-### Image pull failed?
+### Access ArgoCD UI
 ```bash
-kubectl get secrets -n apps
-./providers/gcp/deploy.sh  # Recreates secrets
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+# Open https://localhost:8080
+# Username: admin
+# Password: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
 ```
 
-### Storage issues?
+### Teardown
 ```bash
-kubectl get storageclass
-kubectl get pvc -n apps
+./providers/gcp/teardown.sh   # GCP
+./providers/local/teardown.sh # Local
+./providers/dev/teardown.sh   # Dev
 ```
 
-## Support
+## Configuration
 
-For issues or questions, check:
-- K3s docs: https://docs.k3s.io
-- Helm charts: https://artifacthub.io
+### Environment Files
+
+| File | Purpose |
+|------|---------|
+| `configs/.env.dev.example` | Development with Tilt |
+| `configs/.env.local.example` | On-premises production-like |
+| `configs/.env.gcp.example` | GCP cloud deployment |
+
+Copy the appropriate example to `configs/.env` before running setup.
 
 ## License
 

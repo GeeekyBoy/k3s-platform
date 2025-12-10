@@ -4,9 +4,19 @@
 # No manual editing needed when adding/removing apps!
 #
 # Usage:
-#   tilt up                    # Start development environment
-#   tilt up -- --no-valkey     # Skip Valkey
-#   tilt up -- --only fastapi  # Only run FastAPI
+#   tilt up                         # Start development environment
+#   tilt up -- --no-valkey          # Skip Valkey
+#   tilt up -- --only fastapi       # Only run FastAPI
+#   tilt up -- --exclude serverless # Exclude serverless apps
+#
+# Prerequisites:
+#   - k3d cluster running (./providers/dev/setup.sh --no-tilt)
+#   - kubectl configured for dev cluster
+#   - uv installed for serverless functions
+#
+# Configuration:
+#   - Edit apps.yaml to add/remove services
+#   - Everything is auto-configured from that file
 #
 # Docs: https://docs.tilt.dev/
 # ================================================================================

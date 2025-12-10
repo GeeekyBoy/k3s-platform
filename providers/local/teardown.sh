@@ -1,6 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
+#===============================================================================
+# K3s Local Production-Like Environment Teardown
+#
+# Removes the local k3d cluster and cleans up resources.
+#
+# Usage:
+#   ./providers/local/teardown.sh
+#===============================================================================
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'

@@ -22,11 +22,11 @@ auth:
 # Sentinel Configuration - Provides automatic failover
 sentinel:
   enabled: true
-  image:
-    registry: docker.io
-    repository: bitnami/valkey-sentinel
-    tag: latest
-    pullPolicy: IfNotPresent
+  # Use chart default image - don't override with custom tag
+  # image:
+  #   registry: docker.io
+  #   repository: bitnami/valkey-sentinel
+  #   tag: 9.0.0
   
   # Sentinel master set name
   masterSet: myprimary
