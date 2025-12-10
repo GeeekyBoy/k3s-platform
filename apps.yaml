@@ -13,6 +13,7 @@
 helm:
   - name: valkey
     chart: bitnami/valkey
+    version: "5.0.10"  # Pin to specific stable version
     namespace: apps
     values: apps/valkey/values.yaml
     enabled: true
@@ -60,5 +61,6 @@ apps:
           dest: /app/src/
 
 repositories:
-  bitnami: https://charts.bitnami.com/bitnami
+  # Bitnami uses OCI registry (required for ArgoCD compatibility)
+  bitnami: oci://registry-1.docker.io/bitnamicharts
   kedacore: https://kedacore.github.io/charts
