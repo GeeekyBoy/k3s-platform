@@ -1,0 +1,164 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi
+  namespace: apps
+  labels:
+    app: fastapi
+    version: v1
+  annotations:
+    # For zero-downtime upgrades
+    kubernetes.io/change-cause: "Initial deployment"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 10  # Keep 10 versions for rollback
+  selector:
+    matchLabels:
+      app: fastapi
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0  # Zero-downtime
+  template:
+    metadata:
+      labels:
+        app: fastapi
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/health"
+    spec:
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      
+      # Service account
+      serviceAccountName: default
+      automountServiceAccountToken: false
+      
+      # Termination grace period for graceful shutdown
+      terminationGracePeriodSeconds: 30
+      
+      containers:
+        - name: fastapi
+          image: fastapi-app:latest
+          imagePullPolicy: Always
+          
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          
+          # Environment variables
+          env:
+            - name: ENV
+              value: "production"
+            - name: VALKEY_SENTINEL_ENABLED
+              value: "true"
+            - name: VALKEY_SENTINEL_HOST
+              value: "valkey"
+            - name: VALKEY_SENTINEL_PORT
+              value: "26379"
+            - name: VALKEY_SENTINEL_MASTER
+              value: "myprimary"
+            - name: VALKEY_PORT
+              value: "6379"
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: valkey
+                  key: valkey-password
+                  optional: true
+          
+          # Resource limits
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          
+          # Security context
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          
+          # Health probes
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          
+          # Lifecycle hooks for graceful shutdown
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          
+          # Volume mounts (for read-only root filesystem)
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      
+      # Spread pods across nodes
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: fastapi
+      
+      # Tolerate spot/preemptible nodes and uninitialized CCM nodes
+      tolerations:
+        - key: "node.cloudprovider.kubernetes.io/uninitialized"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "cloud.google.com/gke-preemptible"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+        - key: "cloud.google.com/gke-spot"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+        - key: "kubernetes.io/arch"
+          operator: "Equal"
+          value: "arm64"
+          effect: "NoSchedule"

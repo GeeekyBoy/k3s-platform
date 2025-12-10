@@ -1,0 +1,64 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Local overlay - for on-premises production-like deployment
+# Key differences from dev:
+#   - Production security settings (readOnlyRootFilesystem: true)
+#   - Multiple replicas for HA
+#   - HPA enabled for autoscaling
+#   - Production logging
+
+resources:
+  - ../../base
+
+transformers:
+  - |-
+    apiVersion: builtin
+    kind: NamespaceTransformer
+    metadata:
+      name: namespace-transformer
+    namespace: apps
+    unsetOnly: true
+
+patches:
+  # Use local registry
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: registry.localhost:5111/fastapi-app:latest
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+    target:
+      kind: Deployment
+      name: fastapi
+  # Local environment doesn't need PDB with 2 replicas (reduce to 1 for resources)
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: fastapi
+  # Adjust HPA for local resources
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 5
+    target:
+      kind: HorizontalPodAutoscaler
+      name: fastapi
+
+labels:
+  - pairs:
+      environment: local
+    includeSelectors: false
+
+configMapGenerator:
+  - name: fastapi-config
+    literals:
+      - ENV=production
+      - LOG_LEVEL=INFO

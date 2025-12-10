@@ -1,0 +1,26 @@
+# Development Dockerfile for serverless functions
+# Supports hot-reload via Tilt live_update
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install pip dependencies
+RUN pip install --no-cache-dir hatchling
+
+# Install the SDK in development mode
+COPY libs/k3sfn /app/libs/k3sfn
+RUN pip install --no-cache-dir -e /app/libs/k3sfn
+
+# Install runtime dependencies
+RUN pip install --no-cache-dir fastapi uvicorn pydantic valkey pyyaml
+
+# Copy function code
+COPY apps/serverless-example/functions /app/functions
+
+# Runtime configuration
+ENV PORT=8080
+EXPOSE 8080
+
+# Run with --reload for development hot-reload
+CMD ["python", "-m", "k3sfn.runtime", "functions"]

@@ -1,0 +1,11 @@
+# Standard RWO StorageClass using K3s local-path provisioner
+# This works out of the box with K3s - no additional drivers needed
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard-rwo
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete

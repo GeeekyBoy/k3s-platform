@@ -1,0 +1,68 @@
+# k3d cluster configuration for local development
+# https://k3d.io/v5.8.3/usage/configfile/
+
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: k3s-local
+servers: 1
+agents: 2
+kubeAPI:
+  host: "localhost"
+  hostIP: "127.0.0.1"
+  hostPort: "6443"
+image: rancher/k3s:v1.34.2-k3s1
+network: k3s-network
+volumes:
+  # Mount local apps directory for Tilt sync
+  - volume: ${PWD}/apps:/apps
+    nodeFilters:
+      - all
+ports:
+  # HTTP ingress
+  - port: 8080:80
+    nodeFilters:
+      - loadbalancer
+  # HTTPS ingress
+  - port: 8443:443
+    nodeFilters:
+      - loadbalancer
+  # NodePort range for services
+  - port: 30000-30100:30000-30100
+    nodeFilters:
+      - server:0
+env:
+  - envVar: K3S_DEBUG=false
+    nodeFilters:
+      - all
+registries:
+  # Local registry for Tilt to push images
+  create:
+    name: registry.localhost
+    host: "0.0.0.0"
+    hostPort: "5111"
+  config: |
+    mirrors:
+      "registry.localhost:5111":
+        endpoint:
+          - "http://registry.localhost:5111"
+options:
+  k3d:
+    wait: true
+    timeout: "180s"
+    disableLoadbalancer: false
+    disableImageVolume: false
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+      - arg: --tls-san=localhost
+        nodeFilters:
+          - server:*
+      - arg: --tls-san=127.0.0.1
+        nodeFilters:
+          - server:*
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true

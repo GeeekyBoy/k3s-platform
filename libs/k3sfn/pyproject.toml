@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "k3sfn"
+version = "0.1.0"
+description = "Firebase-style serverless functions for Kubernetes with KEDA"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+keywords = ["kubernetes", "serverless", "functions", "keda", "faas"]
+authors = [
+    { name = "K3s Platform", email = "noreply@example.com" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: System :: Distributed Computing",
+]
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+runtime = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx>=0.24",
+]
+all = [
+    "k3sfn[runtime,dev]",
+]
+
+[project.scripts]
+k3sfn = "k3sfn.cli:main"
+
+[project.urls]
+Documentation = "https://github.com/example/k3s-platform#readme"
+Source = "https://github.com/example/k3s-platform"
+
+[tool.hatch.build.targets.wheel]
+packages = ["k3sfn"]

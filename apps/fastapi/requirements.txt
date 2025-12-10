@@ -1,0 +1,5 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+valkey==6.0.2
+pydantic==2.10.3
+python-multipart==0.0.18

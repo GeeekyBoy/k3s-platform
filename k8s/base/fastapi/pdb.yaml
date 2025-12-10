@@ -1,0 +1,14 @@
+# PodDisruptionBudget ensures minimum availability during upgrades
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fastapi
+  namespace: apps
+  labels:
+    app: fastapi
+spec:
+  # At least 1 pod must always be available
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: fastapi

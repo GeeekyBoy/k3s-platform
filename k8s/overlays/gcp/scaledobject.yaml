@@ -1,0 +1,78 @@
+# KEDA ScaledObject for FastAPI - enables scale-to-zero
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: fastapi-scaledobject
+  namespace: apps
+  labels:
+    app: fastapi
+spec:
+  scaleTargetRef:
+    name: fastapi
+  
+  # Scale to zero when idle
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  
+  # Time to wait before scaling to zero
+  cooldownPeriod: 300  # 5 minutes
+  
+  # Polling interval
+  pollingInterval: 30
+  
+  # Advanced settings
+  advanced:
+    restoreToOriginalReplicaCount: false
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Percent
+              value: 25
+              periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 15
+  
+  triggers:
+    # Scale based on Valkey queue length via Sentinel (HA-aware)
+    - type: redis-sentinel
+      metadata:
+        # Use valkey service which exposes sentinel on port 26379
+        addresses: valkey.apps.svc.cluster.local:26379
+        # Sentinel master name (configured in valkey values.yaml)
+        sentinelMaster: myprimary
+        listName: queue:default
+        listLength: "5"
+        databaseIndex: "0"
+        enableTLS: "false"
+      authenticationRef:
+        name: valkey-auth
+
+    # Scale based on CPU (fallback)
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"
+
+---
+# Trigger Authentication for Valkey
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: valkey-auth
+  namespace: apps
+spec:
+  secretTargetRef:
+    - parameter: password
+      # Bitnami Valkey chart creates secret with this name and key
+      name: valkey
+      key: valkey-password
+    - parameter: sentinelPassword
+      # Sentinel uses the same password in Bitnami chart
+      name: valkey
+      key: valkey-password

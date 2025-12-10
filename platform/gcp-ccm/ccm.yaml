@@ -1,0 +1,93 @@
+#═══════════════════════════════════════════════════════════════════════════════
+# GCP Cloud Controller Manager for K3s
+# Enables native GCP LoadBalancer and node management
+#═══════════════════════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloud-config
+  namespace: kube-system
+data:
+  gce.conf: |
+    [Global]
+    project-id = GCP_PROJECT_ID_PLACEHOLDER
+    network-name = VPC_NAME_PLACEHOLDER
+    subnetwork-name = SUBNET_NAME_PLACEHOLDER
+    node-tags = NODE_TAGS_PLACEHOLDER
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloud-controller-manager
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system:cloud-controller-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: cloud-controller-manager
+    namespace: kube-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cloud-controller-manager
+  namespace: kube-system
+  labels:
+    k8s-app: cloud-controller-manager
+spec:
+  selector:
+    matchLabels:
+      k8s-app: cloud-controller-manager
+  template:
+    metadata:
+      labels:
+        k8s-app: cloud-controller-manager
+    spec:
+      serviceAccountName: cloud-controller-manager
+      tolerations:
+        - key: node.cloudprovider.kubernetes.io/uninitialized
+          value: "true"
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      hostNetwork: true
+      containers:
+        - name: cloud-controller-manager
+          image: registry.k8s.io/cloud-provider-gcp/cloud-controller-manager:v34.2.0
+          command:
+            - /cloud-controller-manager
+            - --cloud-provider=gce
+            - --cloud-config=/etc/gce/gce.conf
+            - --leader-elect=true
+            - --controllers=*,-nodeipam
+            - --allocate-node-cidrs=false
+            - --configure-cloud-routes=false
+            - --v=2
+          volumeMounts:
+            - name: cloud-config
+              mountPath: /etc/gce
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 50Mi
+            limits:
+              cpu: 200m
+              memory: 200Mi
+      volumes:
+        - name: cloud-config
+          configMap:
+            name: cloud-config

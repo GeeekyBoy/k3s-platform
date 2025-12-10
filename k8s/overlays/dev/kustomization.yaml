@@ -1,0 +1,69 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Dev overlay - for local development with hot-reload
+# Key differences from local:
+#   - readOnlyRootFilesystem: false (allows hot-reload)
+#   - replicas: 1 (save resources)
+#   - No HPA (Tilt manages rebuilds)
+#   - Debug logging
+
+resources:
+  - ../../base
+
+transformers:
+  - |-
+    apiVersion: builtin
+    kind: NamespaceTransformer
+    metadata:
+      name: namespace-transformer
+    namespace: apps
+    unsetOnly: true
+
+patches:
+  # Single replica for dev
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: fastapi
+  # Disable HPA for dev (Tilt handles scaling)
+  - patch: |-
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: fastapi
+    target:
+      kind: HorizontalPodAutoscaler
+      name: fastapi
+  # Dev-specific container settings
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: registry.localhost:5111/fastapi-app:latest
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+      - op: replace
+        path: /spec/template/spec/containers/0/securityContext/readOnlyRootFilesystem
+        value: false
+      - op: replace
+        path: /spec/template/spec/containers/0/env/0/value
+        value: "development"
+    target:
+      kind: Deployment
+      name: fastapi
+
+labels:
+  - pairs:
+      environment: dev
+    includeSelectors: false
+
+configMapGenerator:
+  - name: fastapi-config
+    literals:
+      - ENV=development
+      - LOG_LEVEL=DEBUG

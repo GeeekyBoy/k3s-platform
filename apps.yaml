@@ -1,0 +1,64 @@
+# Application Deployments Configuration
+# ================================================================================
+# This file configures all applications across three environments:
+#   - dev:   Local development with hot-reload (Tilt)
+#   - local: On-premises production-like deployment (k3d without hot-reload)
+#   - gcp:   Cloud production deployment (GCP with full autoscaling)
+#
+# Add/remove services by enabling/disabling entries below.
+# No Tiltfile or script changes needed!
+# ================================================================================
+
+# Helm Charts (for third-party services like databases)
+helm:
+  - name: valkey
+    chart: bitnami/valkey
+    namespace: apps
+    values: apps/valkey/values.yaml
+    enabled: true
+    # Environment overrides (optional)
+    # env:
+    #   dev:
+    #     values: apps/valkey/values-dev.yaml
+    #   local:
+    #     enabled: false  # Use external Valkey
+
+# Kustomize (deploys your services from k8s/base via overlays)
+# The overlay is auto-selected based on environment
+kustomize:
+  - name: apps
+    path: k8s/overlays/${PLATFORM_ENV}
+    enabled: true
+
+# Serverless Functions (k3sfn apps with @serverless decorators)
+# Each app gets its functions discovered, built, and deployed automatically
+serverless:
+  - name: serverless-example
+    path: apps/serverless-example
+    namespace: apps
+    enabled: true
+    # Dev mode settings (hot-reload, port forwards)
+    dev:
+      port_base: 8081  # Functions get ports 8081, 8082, 8083...
+      live_update: true
+
+# Traditional container apps (FastAPI, etc.)
+# These are built from source and deployed as Deployments
+apps:
+  - name: fastapi
+    path: apps/fastapi
+    namespace: apps
+    enabled: true
+    dockerfile: Dockerfile
+    dockerfile_dev: Dockerfile.dev  # For dev environment with hot-reload
+    # Dev mode settings
+    dev:
+      port: 8000
+      live_update: true
+      sync:
+        - src: src/
+          dest: /app/src/
+
+repositories:
+  bitnami: https://charts.bitnami.com/bitnami
+  kedacore: https://kedacore.github.io/charts
