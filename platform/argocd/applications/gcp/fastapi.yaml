@@ -1,0 +1,31 @@
+# FastAPI Kustomize Application for GCP Environment
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fastapi
+  namespace: argocd
+  labels:
+    app.kubernetes.io/component: api
+    environment: gcp
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/GeeekyBoy/k3s-platform.git
+    targetRevision: HEAD
+    path: k8s/overlays/gcp
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: apps
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true  # Only sync changed resources (incremental)
+      - ServerSideApply=true

@@ -11,13 +11,15 @@ set -euo pipefail
 #   - Production security settings
 #   - No hot-reload (use dev environment for that)
 #   - Full KEDA scale-to-zero support
+#   - ArgoCD for GitOps-based incremental deployments
 #
 # This is different from dev environment:
 #   - dev:   Hot-reload, single replica, debug logging (for development)
 #   - local: Production-like, multiple replicas, INFO logging (for on-prem)
 #
 # Usage:
-#   ./providers/local/setup.sh
+#   ./providers/local/setup.sh           # Full setup with ArgoCD
+#   ./providers/local/setup.sh --no-argo # Skip ArgoCD (use deploy-apps.sh)
 #===============================================================================
 
 # Colors for output
@@ -35,6 +37,22 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CLUSTER_NAME="k3s-local"
+USE_ARGOCD=true
+GITHUB_REPO="https://github.com/GeeekyBoy/k3s-platform.git"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-argo|--no-argocd)
+            USE_ARGOCD=false
+            shift
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
 
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -148,6 +166,45 @@ install_keda() {
     log_success "KEDA installed with HTTP Add-on"
 }
 
+install_argocd() {
+    log_info "Installing ArgoCD for GitOps deployments..."
+
+    # Create argocd namespace
+    kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+
+    # Install ArgoCD using kustomize
+    log_info "Applying ArgoCD manifests..."
+    kubectl apply -k "${PROJECT_ROOT}/platform/argocd/"
+
+    # Wait for ArgoCD to be ready
+    log_info "Waiting for ArgoCD server to be ready..."
+    kubectl rollout status deployment/argocd-server -n argocd --timeout=300s
+    kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=300s
+    kubectl rollout status deployment/argocd-applicationset-controller -n argocd --timeout=300s
+
+    # Get initial admin password
+    log_info "ArgoCD admin password:"
+    echo "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo"
+
+    log_success "ArgoCD installed"
+}
+
+deploy_argocd_apps() {
+    log_info "Deploying applications via ArgoCD..."
+
+    # Create the App-of-Apps with local environment
+    # We use sed to replace ENV_PLACEHOLDER with 'local'
+    sed "s|ENV_PLACEHOLDER|local|g" "${PROJECT_ROOT}/platform/argocd/applications/app-of-apps.yaml" | kubectl apply -f -
+
+    log_info "Waiting for ArgoCD to sync applications..."
+    sleep 10
+
+    # Check application status
+    kubectl get applications -n argocd 2>/dev/null || true
+
+    log_success "ArgoCD applications deployed"
+}
+
 setup_local_env() {
     log_info "Setting up local environment configuration..."
 
@@ -165,14 +222,19 @@ setup_local_env() {
 }
 
 deploy_apps() {
-    log_info "Deploying applications via unified pipeline..."
+    if [[ "${USE_ARGOCD}" == "true" ]]; then
+        install_argocd
+        deploy_argocd_apps
+    else
+        log_info "Deploying applications via unified pipeline..."
 
-    # Set environment for deploy-apps.sh
-    export KUBECONFIG="$(k3d kubeconfig write ${CLUSTER_NAME})"
-    export PLATFORM_ENV="local"
+        # Set environment for deploy-apps.sh
+        export KUBECONFIG="$(k3d kubeconfig write ${CLUSTER_NAME})"
+        export PLATFORM_ENV="local"
 
-    # Use the unified deployment script
-    "${PROJECT_ROOT}/scripts/deploy-apps.sh"
+        # Use the unified deployment script
+        "${PROJECT_ROOT}/scripts/deploy-apps.sh"
+    fi
 }
 
 print_access_info() {
@@ -192,13 +254,39 @@ print_access_info() {
     echo "Access URLs:"
     echo "  HTTP:       http://localhost:8080"
     echo "  HTTPS:      https://localhost:8443"
+
+    if [[ "${USE_ARGOCD}" == "true" ]]; then
+        echo ""
+        echo "ArgoCD (GitOps):"
+        echo "  UI:         https://localhost:30443"
+        echo "  Username:   admin"
+        echo "  Password:   kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
+        echo ""
+        echo "ArgoCD CLI:"
+        echo "  argocd login localhost:30443 --insecure --username admin"
+        echo ""
+        echo "To sync apps (after git push):"
+        echo "  argocd app sync k3s-platform"
+        echo "  # Or use the ArgoCD UI"
+    fi
+
     echo ""
     echo "Valkey access:"
     echo "  kubectl port-forward svc/valkey -n apps 6379:6379"
     echo "  redis-cli -h localhost -p 6379"
     echo ""
-    echo "To deploy/redeploy apps:"
-    echo "  PLATFORM_ENV=local ./scripts/deploy-apps.sh"
+
+    if [[ "${USE_ARGOCD}" == "true" ]]; then
+        echo "Deployment workflow (GitOps):"
+        echo "  1. Make changes to code/manifests"
+        echo "  2. git add . && git commit -m 'your changes' && git push"
+        echo "  3. ArgoCD auto-syncs OR click 'Sync' in UI"
+        echo "  4. Only changed resources are updated (incremental)"
+    else
+        echo "To deploy/redeploy apps:"
+        echo "  PLATFORM_ENV=local ./scripts/deploy-apps.sh"
+    fi
+
     echo ""
     echo "For development with hot-reload, use the dev environment instead:"
     echo "  ./providers/dev/setup.sh"

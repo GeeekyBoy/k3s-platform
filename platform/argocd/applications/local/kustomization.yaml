@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Local environment ArgoCD Applications
+# These applications manage all workloads in the local k3d cluster
+
+resources:
+  - valkey.yaml
+  - fastapi.yaml
+
+labels:
+  - pairs:
+      environment: local
+      app.kubernetes.io/part-of: k3s-platform
+    includeSelectors: false

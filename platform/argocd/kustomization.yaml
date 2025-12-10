@@ -1,0 +1,43 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: argocd
+
+resources:
+  # ArgoCD core installation (from upstream)
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v2.14.2/manifests/install.yaml
+  # Our custom configurations
+  - argocd-cm.yaml
+  - argocd-cmd-params.yaml
+  - argocd-rbac.yaml
+
+patches:
+  # Make ArgoCD accessible via NodePort for local/k3d environments
+  - patch: |-
+      - op: replace
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30443
+    target:
+      kind: Service
+      name: argocd-server
+      namespace: argocd
+
+  # Reduce resource requests for local environments
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 128Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 50m
+    target:
+      kind: Deployment
+      namespace: argocd
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: k3s-platform
+    includeSelectors: false

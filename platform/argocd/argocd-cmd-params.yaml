@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cmd-params-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  # Server configuration
+  server.insecure: "true"  # Disable TLS (Traefik handles TLS termination)
+
+  # Repo server timeout (for large repos)
+  reposerver.parallelism.limit: "2"
+
+  # Application controller settings
+  controller.status.processors: "5"
+  controller.operation.processors: "5"
+  controller.self.heal.timeout.seconds: "5"
+
+  # Sync settings - only sync out-of-sync resources (incremental)
+  controller.diff.server.side: "true"
