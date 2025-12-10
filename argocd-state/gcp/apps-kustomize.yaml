@@ -1,31 +1,30 @@
-# App-of-Apps Pattern
-# This root application manages all other applications
-# Environment is set via ARGOCD_ENV parameter during deployment
+# Auto-generated from apps.yaml - DO NOT EDIT MANUALLY
+# Regenerate with: ./scripts/generate-argocd-state.sh gcp
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: k3s-platform
+  name: apps
   namespace: argocd
   labels:
     app.kubernetes.io/part-of: k3s-platform
+    environment: gcp
+    type: kustomize
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: default
-
+  project: k3s-platform
   source:
     repoURL: https://github.com/GeeekyBoy/k3s-platform.git
     targetRevision: HEAD
-    path: platform/argocd/applications/ENV_PLACEHOLDER
-
+    path: k8s/overlays/gcp
   destination:
     server: https://kubernetes.default.svc
-    namespace: argocd
-
+    namespace: apps
   syncPolicy:
     automated:
-      prune: false  # Don't auto-delete apps
-      selfHeal: true  # Auto-sync when drift detected
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - ApplyOutOfSyncOnly=true  # Only sync changed resources
+      - ApplyOutOfSyncOnly=true
+      - ServerSideApply=true

@@ -1,0 +1,311 @@
+# Auto-generated from apps.yaml - DO NOT EDIT MANUALLY
+# Regenerate with: ./scripts/generate-argocd-state.sh local
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: valkey
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: k3s-platform
+    environment: local
+    type: helm
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: k3s-platform
+  source:
+    repoURL: https://charts.bitnami.com/bitnami
+    chart: valkey
+    targetRevision: "*"
+    helm:
+      releaseName: valkey
+      valueFiles: []
+      values: |
+        # Valkey Helm Chart Values
+        # Bitnami Valkey with Sentinel for High Availability
+        # https://github.com/bitnami/charts/tree/main/bitnami/valkey
+        
+        global:
+          security:
+            allowInsecureImages: true
+        
+        # Architecture: replication with Sentinel for automatic failover
+        architecture: replication
+        
+        # Authentication
+        auth:
+          enabled: true
+          sentinel: true
+          # Password will be auto-generated if not set
+          # For production, use existingSecret
+          password: ""
+          # existingSecret: valkey-secret
+          # existingSecretPasswordKey: valkey-password
+        
+        # Sentinel Configuration - Provides automatic failover
+        sentinel:
+          enabled: true
+          image:
+            registry: docker.io
+            repository: bitnami/valkey-sentinel
+            tag: latest
+            pullPolicy: IfNotPresent
+          
+          # Sentinel master set name
+          masterSet: myprimary
+          
+          # Quorum: minimum sentinels to agree on failover
+          # With 3 sentinels, quorum of 2 means majority must agree
+          quorum: 2
+          
+          # How long to wait before considering master down
+          downAfterMilliseconds: 10000
+          
+          # Failover timeout
+          failoverTimeout: 180000
+          
+          # How many replicas can sync simultaneously during failover
+          parallelSyncs: 1
+          
+          # Resources for sentinel containers
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          
+          # Sentinel runs as sidecar in each Valkey pod
+          containerPorts:
+            sentinel: 26379
+          
+          # Liveness/Readiness probes
+          livenessProbe:
+            enabled: true
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          
+          readinessProbe:
+            enabled: true
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+        
+        # Primary (Master) node configuration
+        primary:
+          # Only 1 primary - Sentinel handles failover
+          replicaCount: 1
+        
+          # Persistence for data durability
+          persistence:
+            enabled: true
+            size: 8Gi
+            storageClass: "standard-rwo"
+            accessModes:
+              - ReadWriteOnce
+        
+          # Valkey configuration
+          configuration: |
+            # Persistence
+            appendonly yes
+            appendfsync everysec
+        
+            # Memory management
+            maxmemory-policy allkeys-lru
+        
+            # Replication
+            min-replicas-to-write 1
+            min-replicas-max-lag 10
+        
+            # Timeout for idle connections
+            timeout 300
+        
+            # TCP keepalive
+            tcp-keepalive 300
+        
+          # Resources
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+        
+          # Pod Disruption Budget for zero-downtime
+          pdb:
+            create: true
+            minAvailable: ""
+            maxUnavailable: 1
+        
+          # Affinity to spread across nodes
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/component: primary
+                    topologyKey: kubernetes.io/hostname
+        
+          # Tolerations for GCP nodes
+          tolerations:
+            - key: "node.cloudprovider.kubernetes.io/uninitialized"
+              operator: "Exists"
+              effect: "NoSchedule"
+            - key: "cloud.google.com/gke-preemptible"
+              operator: "Equal"
+              value: "true"
+              effect: "NoSchedule"
+            - key: "cloud.google.com/gke-spot"
+              operator: "Equal"
+              value: "true"
+              effect: "NoSchedule"
+        
+        # Replica (Slave) nodes configuration
+        replica:
+          # 2 replicas for HA
+          replicaCount: 2
+        
+          # Persistence
+          persistence:
+            enabled: true
+            size: 8Gi
+            storageClass: "standard-rwo"
+            accessModes:
+              - ReadWriteOnce
+        
+          # Valkey configuration for replicas
+          configuration: |
+            # Persistence
+            appendonly yes
+            appendfsync everysec
+        
+            # Memory management
+            maxmemory-policy allkeys-lru
+        
+            # Allow reads on replicas
+            replica-read-only yes
+        
+            # Timeout
+            timeout 300
+        
+            # TCP keepalive
+            tcp-keepalive 300
+        
+          # Resources
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+        
+          # Pod Disruption Budget
+          pdb:
+            create: true
+            minAvailable: 1
+            maxUnavailable: ""
+        
+          # Autoscaling (optional)
+          autoscaling:
+            enabled: false
+            minReplicas: 2
+            maxReplicas: 5
+            targetCPU: 80
+            targetMemory: 80
+        
+          # Spread replicas across nodes
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/component: replica
+                    topologyKey: kubernetes.io/hostname
+        
+          # Tolerations for GCP nodes
+          tolerations:
+            - key: "node.cloudprovider.kubernetes.io/uninitialized"
+              operator: "Exists"
+              effect: "NoSchedule"
+            - key: "cloud.google.com/gke-preemptible"
+              operator: "Equal"
+              value: "true"
+              effect: "NoSchedule"
+            - key: "cloud.google.com/gke-spot"
+              operator: "Equal"
+              value: "true"
+              effect: "NoSchedule"
+        
+        # Service configuration
+        service:
+          type: ClusterIP
+          ports:
+            valkey: 6379
+            sentinel: 26379
+        
+        # Metrics for monitoring
+        metrics:
+          enabled: false
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          serviceMonitor:
+            enabled: false  # Enable if using Prometheus Operator
+        
+        # Security context
+        podSecurityContext:
+          enabled: true
+          fsGroup: 1001
+        
+        containerSecurityContext:
+          enabled: true
+          runAsUser: 1001
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        
+        # Network policies
+        networkPolicy:
+          enabled: true
+          allowExternal: false
+          # Allow only pods with this label to connect
+          ingressNSMatchLabels:
+            kubernetes.io/metadata.name: apps
+          ingressNSPodMatchLabels: {}
+        
+        # Volume permissions init container
+        volumePermissions:
+          enabled: false
+        
+        # Sysctl settings (requires privileged init container)
+        sysctl:
+          enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: apps
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+      - ServerSideApply=true

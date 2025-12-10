@@ -6,12 +6,13 @@ namespace: argocd
 resources:
   # ArgoCD core installation (from upstream)
   - https://raw.githubusercontent.com/argoproj/argo-cd/v2.14.2/manifests/install.yaml
-  # Our custom configurations
-  - argocd-cm.yaml
-  - argocd-cmd-params.yaml
-  - argocd-rbac.yaml
 
 patches:
+  # Strategic merge patches for existing resources in upstream manifest
+  - path: argocd-cm.yaml
+  - path: argocd-cmd-params.yaml
+  - path: argocd-rbac.yaml
+  # JSON patches below
   # Make ArgoCD accessible via NodePort for local/k3d environments
   - patch: |-
       - op: replace
@@ -37,7 +38,5 @@ patches:
       kind: Deployment
       namespace: argocd
 
-labels:
-  - pairs:
-      app.kubernetes.io/part-of: k3s-platform
-    includeSelectors: false
+# Note: Do NOT add app.kubernetes.io/part-of labels here as ArgoCD
+# components look for resources with app.kubernetes.io/part-of=argocd

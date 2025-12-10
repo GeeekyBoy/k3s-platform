@@ -12,8 +12,7 @@ set -euo pipefail
 #   - ArgoCD (GitOps incremental deployments)
 #
 # Usage:
-#   ./platform/deploy.sh            # Full deployment with ArgoCD
-#   ./platform/deploy.sh --no-argo  # Skip ArgoCD
+#   ./platform/deploy.sh
 #═══════════════════════════════════════════════════════════════════════════════
 
 # Colors
@@ -29,22 +28,7 @@ log_step() { echo -e "\n${CYAN}═══ $1 ═══${NC}\n"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-USE_ARGOCD=true
 GITHUB_REPO="https://github.com/GeeekyBoy/k3s-platform.git"
-
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --no-argo|--no-argocd)
-            USE_ARGOCD=false
-            shift
-            ;;
-        *)
-            echo "[ERROR] Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
 
 # Load configuration
 if [[ -f "${PROJECT_ROOT}/configs/.env" ]]; then
@@ -207,31 +191,47 @@ log_success "Cluster Autoscaler deployed (VM scale-to-zero enabled)"
 #═══════════════════════════════════════════════════════════════════════════════
 # Deploy ArgoCD (GitOps)
 #═══════════════════════════════════════════════════════════════════════════════
-if [[ "${USE_ARGOCD}" == "true" ]]; then
-    log_step "Deploying ArgoCD for GitOps"
+log_step "Deploying ArgoCD for GitOps"
 
-    # Create argocd namespace
-    kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+# Create argocd namespace
+kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 
-    # Install ArgoCD using kustomize
-    log_info "Applying ArgoCD manifests..."
-    kubectl apply -k "${SCRIPT_DIR}/argocd/"
+# Install ArgoCD using kustomize
+log_info "Applying ArgoCD manifests..."
+kubectl apply -k "${SCRIPT_DIR}/argocd/"
 
-    # Wait for ArgoCD to be ready
-    log_info "Waiting for ArgoCD server to be ready..."
-    kubectl rollout status deployment/argocd-server -n argocd --timeout=300s
-    kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=300s
+# Wait for ArgoCD to be ready
+log_info "Waiting for ArgoCD server to be ready..."
+kubectl rollout status deployment/argocd-server -n argocd --timeout=300s
+kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=300s
 
-    # Deploy the App-of-Apps for GCP environment
-    log_info "Deploying ArgoCD applications for GCP..."
-    sed "s|ENV_PLACEHOLDER|gcp|g" "${SCRIPT_DIR}/argocd/applications/app-of-apps.yaml" | kubectl apply -f -
+log_success "ArgoCD installed"
 
-    log_success "ArgoCD deployed"
+#═══════════════════════════════════════════════════════════════════════════════
+# Generate and Apply ArgoCD State
+#═══════════════════════════════════════════════════════════════════════════════
+log_step "Generating ArgoCD State from apps.yaml"
 
-    # Get initial admin password
-    log_info "ArgoCD admin password:"
-    echo "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo"
+# Generate the ArgoCD state for GCP environment
+"${PROJECT_ROOT}/scripts/generate-argocd-state.sh" gcp
+
+# Check if argocd-state/gcp exists
+if [[ ! -d "${PROJECT_ROOT}/argocd-state/gcp" ]]; then
+    log_error "ArgoCD state generation failed"
+    exit 1
 fi
+
+# Apply the generated state
+log_info "Applying ArgoCD applications from generated state..."
+kubectl apply -k "${PROJECT_ROOT}/argocd-state/gcp/"
+
+log_info "Waiting for ArgoCD to sync applications..."
+sleep 5
+
+# Check application status
+kubectl get applications -n argocd 2>/dev/null || true
+
+log_success "ArgoCD applications deployed"
 
 #═══════════════════════════════════════════════════════════════════════════════
 # Apply Upgrade Plans
@@ -269,23 +269,17 @@ echo "  ✓ KEDA Autoscaler (pod scale-to-zero)"
 echo "  ✓ KEDA HTTP Add-on (HTTP scale-to-zero for serverless)"
 echo "  ✓ Cluster Autoscaler (VM scale-to-zero)"
 echo "  ✓ K3s Upgrade Plans"
-if [[ "${USE_ARGOCD}" == "true" ]]; then
-    echo "  ✓ ArgoCD (GitOps incremental deployments)"
-fi
+echo "  ✓ ArgoCD (GitOps incremental deployments)"
 echo ""
 
-if [[ "${USE_ARGOCD}" == "true" ]]; then
-    echo "ArgoCD (GitOps):"
-    echo "  Get password: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
-    echo "  Port forward: kubectl port-forward svc/argocd-server -n argocd 8080:443"
-    echo "  Access UI:    https://localhost:8080"
-    echo ""
-    echo "Deployment workflow:"
-    echo "  1. Make changes to code/manifests"
-    echo "  2. git commit && git push"
-    echo "  3. ArgoCD auto-syncs (only changed resources)"
-else
-    echo "Next: Deploy applications"
-    echo "  kubectl apply -k k8s/overlays/gcp"
-fi
+echo "ArgoCD (GitOps):"
+echo "  Get password: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
+echo "  Port forward: kubectl port-forward svc/argocd-server -n argocd 8080:443"
+echo "  Access UI:    https://localhost:8080"
+echo ""
+echo "Deployment workflow (GitOps):"
+echo "  1. Edit apps.yaml or app code"
+echo "  2. ./scripts/generate-argocd-state.sh gcp"
+echo "  3. git add . && git commit && git push"
+echo "  4. ArgoCD auto-syncs (only changed resources updated)"
 echo ""
