@@ -13,6 +13,12 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: k3s-platform
+  # Ignore replicas field - KEDA/HPA manages scaling
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
   source:
     repoURL: https://github.com/GeeekyBoy/k3s-platform.git
     targetRevision: HEAD
@@ -33,3 +39,4 @@ spec:
       - CreateNamespace=true
       - ApplyOutOfSyncOnly=true
       - ServerSideApply=true
+      - RespectIgnoreDifferences=true

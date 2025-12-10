@@ -267,6 +267,12 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: k3s-platform
+  # Ignore replicas field - KEDA/HPA manages scaling
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
   source:
     repoURL: ${GITHUB_REPO}
     targetRevision: HEAD
@@ -286,6 +292,7 @@ spec:
       - CreateNamespace=true
       - ApplyOutOfSyncOnly=true
       - ServerSideApply=true
+      - RespectIgnoreDifferences=true
 EOF
 
         log_info "Generated: ${name}-kustomize.yaml (Kustomize)"
@@ -353,6 +360,12 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: k3s-platform
+  # Ignore replicas field - KEDA manages scaling for serverless functions
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
   source:
     repoURL: ${GITHUB_REPO}
     targetRevision: HEAD
@@ -371,6 +384,7 @@ spec:
       - CreateNamespace=true
       - ApplyOutOfSyncOnly=true
       - ServerSideApply=true
+      - RespectIgnoreDifferences=true
 EOF
 
         log_info "Generated: ${name}-serverless.yaml (Application)"
