@@ -36,8 +36,13 @@ ENVIRONMENT="${1:-local}"
 # Git repository URL - auto-detect or use default
 GITHUB_REPO="${GITHUB_REPO:-$(git -C "${PROJECT_ROOT}" remote get-url origin 2>/dev/null || echo "https://github.com/GeeekyBoy/k3s-platform.git")}"
 
-# Load environment configuration for registry settings
-if [[ -f "${PROJECT_ROOT}/configs/.env" ]]; then
+# Load environment-specific configuration
+# Try environment-specific file first (e.g., .env.gcp, .env.local)
+# Fall back to generic .env if specific file doesn't exist
+ENV_FILE="${PROJECT_ROOT}/configs/.env.${ENVIRONMENT}"
+if [[ -f "${ENV_FILE}" ]]; then
+    source "${ENV_FILE}"
+elif [[ -f "${PROJECT_ROOT}/configs/.env" ]]; then
     source "${PROJECT_ROOT}/configs/.env"
 fi
 
@@ -47,7 +52,14 @@ case "${ENVIRONMENT}" in
         REGISTRY="${REGISTRY_NAME:-registry.localhost:5111}"
         ;;
     gcp)
-        REGISTRY="${GCP_REGION:-us-central1}-docker.pkg.dev/${GCP_PROJECT_ID:-}/${REGISTRY_NAME:-k3s-platform}"
+        # Validate GCP_PROJECT_ID is set
+        if [[ -z "${GCP_PROJECT_ID:-}" ]]; then
+            echo "[ERROR] GCP_PROJECT_ID is required for gcp environment"
+            echo "  Set it via: export GCP_PROJECT_ID=your-project-id"
+            echo "  Or create: configs/.env.gcp with GCP_PROJECT_ID=your-project-id"
+            exit 1
+        fi
+        REGISTRY="${GCP_REGION:-us-central1}-docker.pkg.dev/${GCP_PROJECT_ID}/${REGISTRY_NAME:-k3s-platform}"
         ;;
 esac
 

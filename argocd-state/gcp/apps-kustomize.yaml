@@ -27,7 +27,7 @@ spec:
       # Image substitutions generated from apps.yaml and configs/.env
       # Base images are mapped to environment-specific registry
       images:
-      - fastapi-app=us-central1-docker.pkg.dev//k3s-platform/fastapi:latest
+      - fastapi-app=us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/fastapi:latest
   destination:
     server: https://kubernetes.default.svc
     namespace: apps
