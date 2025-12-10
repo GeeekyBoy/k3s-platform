@@ -10,7 +10,9 @@ metadata:
     # For zero-downtime upgrades
     kubernetes.io/change-cause: "Initial deployment"
 spec:
-  replicas: 2
+  # Replicas managed by KEDA ScaledObject in GCP overlay
+  # Set to 0 to match KEDA minReplicaCount and avoid ArgoCD sync loops
+  replicas: 0
   revisionHistoryLimit: 10  # Keep 10 versions for rollback
   selector:
     matchLabels:

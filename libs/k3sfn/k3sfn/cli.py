@@ -147,7 +147,7 @@ def generate_deployment(
             },
         },
         "spec": {
-            "replicas": func.scaling.min_instances if func.scaling.min_instances > 0 else 1,
+            "replicas": func.scaling.min_instances,
             "selector": {
                 "matchLabels": {
                     "app": name,

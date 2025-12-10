@@ -21,7 +21,7 @@ spec:
       # Image substitutions generated from apps.yaml and configs/.env
       # Base images are mapped to environment-specific registry
       images:
-      - fastapi-app=k3s-platform/fastapi:latest
+      - fastapi-app=registry.localhost:5111/fastapi:latest
   destination:
     server: https://kubernetes.default.svc
     namespace: apps

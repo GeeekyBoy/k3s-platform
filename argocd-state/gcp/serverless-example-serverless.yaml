@@ -2,8 +2,8 @@
 # Regenerate with: ./scripts/generate-argocd-state.sh gcp
 #
 # NOTE: You must build and push the image before ArgoCD can deploy this:
-#   docker build -t us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest apps/serverless-example
-#   docker push us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:latest
+#   docker build -t us-central1-docker.pkg.dev//k3s-platform/serverless-example:latest apps/serverless-example
+#   docker push us-central1-docker.pkg.dev//k3s-platform/serverless-example:latest
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
