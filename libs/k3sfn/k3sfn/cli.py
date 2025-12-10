@@ -597,17 +597,51 @@ def generate_host_rewrite_middleware(
     }
 
 
+def generate_keda_interceptor_externalname(
+    namespace: str = "apps",
+) -> Dict:
+    """
+    Generate an ExternalName service to reference KEDA HTTP Add-on interceptor.
+
+    This is needed because Traefik IngressRoute cannot reference services
+    in other namespaces by default. This ExternalName service acts as a
+    local proxy to the cross-namespace KEDA service.
+    """
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": "keda-interceptor-proxy",
+            "namespace": namespace,
+            "labels": {
+                "k3sfn.io/component": "keda-proxy",
+            },
+        },
+        "spec": {
+            "type": "ExternalName",
+            "externalName": "keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local",
+            "ports": [
+                {
+                    "port": 8080,
+                    "targetPort": 8080,
+                    "protocol": "TCP",
+                }
+            ],
+        },
+    }
+
+
 def generate_ingress_routes(
     functions: List[FunctionMetadata],
     app_name: str,
     namespace: str = "apps",
     host: Optional[str] = None,
-) -> tuple[Optional[Dict], List[Dict]]:
+) -> tuple[Optional[Dict], List[Dict], Optional[Dict]]:
     """
     Generate Traefik IngressRoute for PUBLIC HTTP functions only.
 
     Only functions with visibility="public" get exposed via ingress.
-    Returns tuple of (IngressRoute, list of Middlewares)
+    Returns tuple of (IngressRoute, list of Middlewares, ExternalName Service)
     """
     routes = []
     middlewares = []
@@ -631,13 +665,14 @@ def generate_ingress_routes(
         if host:
             match = f"Host(`{host}`) && {match}"
 
+        # Use local ExternalName service instead of cross-namespace reference
+        # This avoids Traefik's "service not in parent resource namespace" error
         routes.append({
             "match": match,
             "kind": "Rule",
             "services": [
                 {
-                    "name": "keda-add-ons-http-interceptor-proxy",
-                    "namespace": "keda",
+                    "name": "keda-interceptor-proxy",
                     "port": 8080,
                 }
             ],
@@ -648,7 +683,7 @@ def generate_ingress_routes(
 
     # Return None if no public routes
     if not routes:
-        return None, []
+        return None, [], None
 
     ingress_route = {
         "apiVersion": "traefik.io/v1alpha1",
@@ -666,7 +701,10 @@ def generate_ingress_routes(
         },
     }
 
-    return ingress_route, middlewares
+    # Generate ExternalName service for cross-namespace KEDA access
+    external_svc = generate_keda_interceptor_externalname(namespace)
+
+    return ingress_route, middlewares, external_svc
 
 
 def generate_all_manifests(
@@ -736,12 +774,15 @@ def generate_all_manifests(
             all_manifests.append(netpol)
 
     # Generate IngressRoute for public functions only
-    ingress, middlewares = generate_ingress_routes(functions, app_name, namespace, host)
+    ingress, middlewares, external_svc = generate_ingress_routes(functions, app_name, namespace, host)
     if middlewares:
         all_manifests.extend(middlewares)
     if ingress:
         all_manifests.append(ingress)
         print(f"  Generated IngressRoute for public functions")
+    if external_svc:
+        all_manifests.append(external_svc)
+        print(f"  Generated ExternalName service for KEDA cross-namespace access")
 
     # Write all manifests to a single file
     manifest_content = yaml.dump_all(all_manifests, default_flow_style=False)

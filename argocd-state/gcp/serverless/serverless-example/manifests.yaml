@@ -1236,8 +1236,7 @@ spec:
     - name: serverless-example-hello-world-host-rewrite
       namespace: apps
     services:
-    - name: keda-add-ons-http-interceptor-proxy
-      namespace: keda
+    - name: keda-interceptor-proxy
       port: 8080
   - kind: Rule
     match: PathPrefix(`/api/animal`)
@@ -1245,8 +1244,7 @@ spec:
     - name: serverless-example-random-animal-host-rewrite
       namespace: apps
     services:
-    - name: keda-add-ons-http-interceptor-proxy
-      namespace: keda
+    - name: keda-interceptor-proxy
       port: 8080
   - kind: Rule
     match: PathPrefix(`/api/health`)
@@ -1254,6 +1252,20 @@ spec:
     - name: serverless-example-health-check-host-rewrite
       namespace: apps
     services:
-    - name: keda-add-ons-http-interceptor-proxy
-      namespace: keda
+    - name: keda-interceptor-proxy
       port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    k3sfn.io/component: keda-proxy
+  name: keda-interceptor-proxy
+  namespace: apps
+spec:
+  externalName: keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local
+  ports:
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+  type: ExternalName
