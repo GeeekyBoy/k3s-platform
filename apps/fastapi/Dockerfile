@@ -14,7 +14,8 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Install Python dependencies
-COPY requirements.txt .
+# Note: Paths are relative to project root for Cloud Build compatibility
+COPY apps/fastapi/requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
@@ -32,7 +33,7 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy application code
-COPY src/ ./
+COPY apps/fastapi/src/ ./
 
 # Security: Set proper permissions
 RUN chown -R appuser:appgroup /app

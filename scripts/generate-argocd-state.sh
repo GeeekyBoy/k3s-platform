@@ -52,6 +52,26 @@ elif [[ -f "${PROJECT_ROOT}/configs/.env" ]]; then
     source "${PROJECT_ROOT}/configs/.env"
 fi
 
+# Load per-app image tags from build-images.sh output (if available)
+IMAGE_TAGS_FILE="${PROJECT_ROOT}/.image-tags.env"
+if [[ -f "${IMAGE_TAGS_FILE}" ]]; then
+    source "${IMAGE_TAGS_FILE}"
+    log_info "Loaded per-app image tags from ${IMAGE_TAGS_FILE}"
+else
+    log_warn "No .image-tags.env found, will use 'latest' for all images"
+    log_info "Run ./scripts/build-images.sh first to generate content-based tags"
+fi
+
+# Helper function to get image tag for a specific app
+# Usage: get_image_tag "fastapi" -> returns content hash or "latest"
+get_image_tag() {
+    local app_name="$1"
+    # Convert app name to uppercase and replace hyphens with underscores
+    local var_name="IMAGE_TAG_$(echo "${app_name}" | tr '[:lower:]-' '[:upper:]_')"
+    local tag="${!var_name:-latest}"
+    echo "${tag}"
+}
+
 # Set registry and ingress based on environment
 case "${ENVIRONMENT}" in
     local)
@@ -494,6 +514,100 @@ EOF
 log_info "Generated: kustomization.yaml"
 
 #===============================================================================
+# Post-process: Substitute environment variables in manifests
+#===============================================================================
+log_info "Post-processing manifests to substitute environment variables..."
+
+# For GCP environment, substitute ${PROJECT_ID} with actual project ID
+if [[ "${ENVIRONMENT}" == "gcp" ]]; then
+    # Substitute in all YAML files under the environment directory
+    find "${OUTPUT_DIR}/${ENVIRONMENT}" -type f -name "*.yaml" | while read -r manifest_file; do
+        if grep -q '\${PROJECT_ID}' "${manifest_file}" 2>/dev/null; then
+            log_info "  Substituting \${PROJECT_ID} in: $(basename "${manifest_file}")"
+            # Use sed to replace ${PROJECT_ID} with actual GCP_PROJECT_ID
+            if [[ "$(uname)" == "Darwin" ]]; then
+                # macOS sed requires empty string for -i
+                sed -i '' "s|\${PROJECT_ID}|${GCP_PROJECT_ID}|g" "${manifest_file}"
+            else
+                # Linux sed
+                sed -i "s|\${PROJECT_ID}|${GCP_PROJECT_ID}|g" "${manifest_file}"
+            fi
+        fi
+        # Also substitute ${GCP_PROJECT_ID} if present
+        if grep -q '\${GCP_PROJECT_ID}' "${manifest_file}" 2>/dev/null; then
+            log_info "  Substituting \${GCP_PROJECT_ID} in: $(basename "${manifest_file}")"
+            if [[ "$(uname)" == "Darwin" ]]; then
+                sed -i '' "s|\${GCP_PROJECT_ID}|${GCP_PROJECT_ID}|g" "${manifest_file}"
+            else
+                sed -i "s|\${GCP_PROJECT_ID}|${GCP_PROJECT_ID}|g" "${manifest_file}"
+            fi
+        fi
+        # Substitute ${GCP_REGION} if present
+        if grep -q '\${GCP_REGION}' "${manifest_file}" 2>/dev/null; then
+            log_info "  Substituting \${GCP_REGION} in: $(basename "${manifest_file}")"
+            if [[ "$(uname)" == "Darwin" ]]; then
+                sed -i '' "s|\${GCP_REGION}|${GCP_REGION}|g" "${manifest_file}"
+            else
+                sed -i "s|\${GCP_REGION}|${GCP_REGION}|g" "${manifest_file}"
+            fi
+        fi
+    done
+    log_success "Variable substitution complete"
+fi
+
+# Substitute image tags per-app (content hash based)
+# For each app, replace <registry>/<app-name>:latest with <registry>/<app-name>:<content-hash>
+log_info "Substituting per-app image tags..."
+
+# Process traditional apps
+apps_count=$(yq eval '.apps | length' "${APPS_FILE}" 2>/dev/null || echo "0")
+for ((i=0; i<apps_count; i++)); do
+    enabled=$(yq eval ".apps[${i}].enabled // true" "${APPS_FILE}")
+    [[ "${enabled}" != "true" ]] && continue
+
+    name=$(yq eval ".apps[${i}].name" "${APPS_FILE}")
+    tag=$(get_image_tag "${name}")
+
+    if [[ "${tag}" != "latest" ]]; then
+        log_info "  ${name}: :latest -> :${tag}"
+        # Find and substitute in app manifests
+        manifest_path="${OUTPUT_DIR}/${ENVIRONMENT}/apps/${name}/manifests.yaml"
+        if [[ -f "${manifest_path}" ]]; then
+            if [[ "$(uname)" == "Darwin" ]]; then
+                sed -i '' "s|/${name}:latest|/${name}:${tag}|g" "${manifest_path}"
+            else
+                sed -i "s|/${name}:latest|/${name}:${tag}|g" "${manifest_path}"
+            fi
+        fi
+    fi
+done
+
+# Process serverless apps
+serverless_count=$(yq eval '.serverless | length' "${APPS_FILE}" 2>/dev/null || echo "0")
+for ((i=0; i<serverless_count; i++)); do
+    enabled=$(yq eval ".serverless[${i}].enabled // true" "${APPS_FILE}")
+    [[ "${enabled}" != "true" ]] && continue
+
+    name=$(yq eval ".serverless[${i}].name" "${APPS_FILE}")
+    tag=$(get_image_tag "${name}")
+
+    if [[ "${tag}" != "latest" ]]; then
+        log_info "  ${name}: :latest -> :${tag}"
+        # Find and substitute in serverless manifests
+        manifest_path="${OUTPUT_DIR}/${ENVIRONMENT}/serverless/${name}/manifests.yaml"
+        if [[ -f "${manifest_path}" ]]; then
+            if [[ "$(uname)" == "Darwin" ]]; then
+                sed -i '' "s|/${name}:latest|/${name}:${tag}|g" "${manifest_path}"
+            else
+                sed -i "s|/${name}:latest|/${name}:${tag}|g" "${manifest_path}"
+            fi
+        fi
+    fi
+done
+
+log_success "Per-app image tag substitution complete"
+
+#===============================================================================
 # Summary
 #===============================================================================
 echo ""
@@ -507,8 +621,14 @@ find "${OUTPUT_DIR}/${ENVIRONMENT}" -type f -name "*.yaml" | sort | while read -
 done
 echo ""
 echo "Next steps:"
-echo "  1. Review the generated files in argocd-state/${ENVIRONMENT}/"
-echo "  2. Commit and push:"
+if [[ "${ENVIRONMENT}" == "gcp" ]]; then
+    echo "  1. Build and push images: ./scripts/build-images.sh"
+    echo "  2. Review the generated files in argocd-state/${ENVIRONMENT}/"
+    echo "  3. Commit and push:"
+else
+    echo "  1. Review the generated files in argocd-state/${ENVIRONMENT}/"
+    echo "  2. Commit and push:"
+fi
 echo "     git add argocd-state/"
 echo "     git commit -m 'Update ArgoCD state for ${ENVIRONMENT}'"
 echo "     git push"

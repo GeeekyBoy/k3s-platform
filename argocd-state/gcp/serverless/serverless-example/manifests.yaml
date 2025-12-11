@@ -32,7 +32,7 @@ spec:
           value: hello_world
         - name: PORT
           value: '8080'
-        image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/serverless-example:latest
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:fef3ad2e0b7c
         livenessProbe:
           httpGet:
             path: /live
@@ -179,7 +179,7 @@ spec:
           value: process_data
         - name: PORT
           value: '8080'
-        image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/serverless-example:latest
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:fef3ad2e0b7c
         livenessProbe:
           httpGet:
             path: /live
@@ -314,7 +314,7 @@ spec:
           value: analyze_content
         - name: PORT
           value: '8080'
-        image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/serverless-example:latest
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:fef3ad2e0b7c
         livenessProbe:
           httpGet:
             path: /live
@@ -458,7 +458,7 @@ spec:
           value: random_animal
         - name: PORT
           value: '8080'
-        image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/serverless-example:latest
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:fef3ad2e0b7c
         livenessProbe:
           httpGet:
             path: /live
@@ -605,7 +605,7 @@ spec:
           value: health_check
         - name: PORT
           value: '8080'
-        image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/serverless-example:latest
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:fef3ad2e0b7c
         livenessProbe:
           httpGet:
             path: /live
@@ -752,7 +752,7 @@ spec:
           value: process_tasks
         - name: PORT
           value: '8080'
-        image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/serverless-example:latest
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:fef3ad2e0b7c
         livenessProbe:
           httpGet:
             path: /live
@@ -886,7 +886,7 @@ spec:
           value: send_emails
         - name: PORT
           value: '8080'
-        image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/serverless-example:latest
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:fef3ad2e0b7c
         livenessProbe:
           httpGet:
             path: /live
@@ -1020,7 +1020,7 @@ spec:
           value: process_images
         - name: PORT
           value: '8080'
-        image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/serverless-example:latest
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:fef3ad2e0b7c
         livenessProbe:
           httpGet:
             path: /live
@@ -1143,7 +1143,7 @@ spec:
             env:
             - name: K3SFN_FUNCTION
               value: hourly_metrics
-            image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/serverless-example:latest
+            image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:fef3ad2e0b7c
             name: function
             resources:
               limits:
@@ -1180,7 +1180,7 @@ spec:
             env:
             - name: K3SFN_FUNCTION
               value: daily_cleanup
-            image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/serverless-example:latest
+            image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:fef3ad2e0b7c
             name: function
             resources:
               limits:
@@ -1217,7 +1217,7 @@ spec:
             env:
             - name: K3SFN_FUNCTION
               value: weekly_report
-            image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/serverless-example:latest
+            image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/serverless-example:fef3ad2e0b7c
             name: function
             resources:
               limits:
