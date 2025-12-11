@@ -141,14 +141,31 @@ log_info "Installing KEDA HTTP Add-on helm chart..."
 # Configure timeouts for cold start reliability:
 # - waitTimeout: Time to wait for pod to become ready (default 20s is too short)
 # - responseHeaderTimeout: Time to wait for app response after pod is ready
+# Note: Each component (operator, interceptor, scaler) needs its own tolerations
+# Reduced resources for control-plane-only clusters (scale-to-zero scenario)
 helm upgrade --install http-add-on kedacore/keda-add-ons-http \
     --namespace keda \
-    --set tolerations[0].key=node-role.kubernetes.io/control-plane \
-    --set tolerations[0].operator=Exists \
-    --set tolerations[0].effect=NoSchedule \
+    --set operator.tolerations[0].key=node-role.kubernetes.io/control-plane \
+    --set operator.tolerations[0].operator=Exists \
+    --set operator.tolerations[0].effect=NoSchedule \
+    --set operator.resources.requests.cpu=32m \
+    --set operator.resources.requests.memory=32Mi \
+    --set interceptor.tolerations[0].key=node-role.kubernetes.io/control-plane \
+    --set interceptor.tolerations[0].operator=Exists \
+    --set interceptor.tolerations[0].effect=NoSchedule \
+    --set interceptor.replicas.min=1 \
+    --set interceptor.resources.requests.cpu=32m \
+    --set interceptor.resources.requests.memory=32Mi \
+    --set scaler.tolerations[0].key=node-role.kubernetes.io/control-plane \
+    --set scaler.tolerations[0].operator=Exists \
+    --set scaler.tolerations[0].effect=NoSchedule \
+    --set scaler.replicas=1 \
+    --set scaler.resources.requests.cpu=32m \
+    --set scaler.resources.requests.memory=32Mi \
     --set interceptor.replicas.waitTimeout=120s \
     --set interceptor.responseHeaderTimeout=60s \
-    --wait
+    --wait \
+    --timeout=300s
 
 log_success "KEDA HTTP Add-on deployed (HTTP scale-to-zero enabled, 120s cold start timeout)"
 
