@@ -2,10 +2,16 @@
 set -euo pipefail
 
 #===============================================================================
-# Generate ArgoCD State from apps.yaml
+# Generate ArgoCD State from apps.yaml (v2)
 #
-# Reads apps.yaml and generates ArgoCD Application manifests into argocd-state/
-# This is the ONLY way to create ArgoCD applications - no manual editing!
+# Reads apps.yaml and generates K8s manifests + ArgoCD Application resources
+# into argocd-state/. This is the ONLY way to deploy to local/gcp environments.
+#
+# Supports apps.yaml v2 sections:
+#   - helm:       Third-party Helm charts (Valkey, etc.)
+#   - apps:       Traditional container apps (k3sapp CLI)
+#   - serverless: Scale-to-zero functions (k3sfn CLI)
+#   - compose:    Docker Compose projects (k3scompose CLI)
 #
 # Usage:
 #   ./scripts/generate-argocd-state.sh [environment]
@@ -19,11 +25,13 @@ set -euo pipefail
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
+RED='\033[0;31m'
 NC='\033[0m'
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -37,8 +45,6 @@ ENVIRONMENT="${1:-local}"
 GITHUB_REPO="${GITHUB_REPO:-$(git -C "${PROJECT_ROOT}" remote get-url origin 2>/dev/null || echo "https://github.com/GeeekyBoy/k3s-platform.git")}"
 
 # Load environment-specific configuration
-# Try environment-specific file first (e.g., .env.gcp, .env.local)
-# Fall back to generic .env if specific file doesn't exist
 ENV_FILE="${PROJECT_ROOT}/configs/.env.${ENVIRONMENT}"
 if [[ -f "${ENV_FILE}" ]]; then
     source "${ENV_FILE}"
@@ -46,47 +52,51 @@ elif [[ -f "${PROJECT_ROOT}/configs/.env" ]]; then
     source "${PROJECT_ROOT}/configs/.env"
 fi
 
-# Set registry based on environment
+# Set registry and ingress based on environment
 case "${ENVIRONMENT}" in
     local)
         REGISTRY="${REGISTRY_NAME:-registry.localhost:5111}"
+        INGRESS_TYPE="traefik"
         ;;
     gcp)
-        # Validate GCP_PROJECT_ID is set
         if [[ -z "${GCP_PROJECT_ID:-}" ]]; then
-            echo "[ERROR] GCP_PROJECT_ID is required for gcp environment"
+            log_error "GCP_PROJECT_ID is required for gcp environment"
             echo "  Set it via: export GCP_PROJECT_ID=your-project-id"
             echo "  Or create: configs/.env.gcp with GCP_PROJECT_ID=your-project-id"
             exit 1
         fi
         REGISTRY="${GCP_REGION:-us-central1}-docker.pkg.dev/${GCP_PROJECT_ID}/${REGISTRY_NAME:-k3s-platform}"
+        INGRESS_TYPE="haproxy"
+        ;;
+    *)
+        echo "Usage: $0 [local|gcp]"
+        echo "  local: Generate state for local k3d cluster"
+        echo "  gcp:   Generate state for GCP cloud cluster"
+        exit 1
         ;;
 esac
-
-# Validate environment
-if [[ "${ENVIRONMENT}" != "local" && "${ENVIRONMENT}" != "gcp" ]]; then
-    echo "Usage: $0 [local|gcp]"
-    echo "  local: Generate state for local k3d cluster"
-    echo "  gcp:   Generate state for GCP cloud cluster"
-    exit 1
-fi
 
 log_info "Generating ArgoCD state for environment: ${ENVIRONMENT}"
 log_info "Source: ${APPS_FILE}"
 log_info "Output: ${OUTPUT_DIR}/${ENVIRONMENT}/"
+log_info "Registry: ${REGISTRY}"
+log_info "Ingress: ${INGRESS_TYPE}"
 log_info "Git repo: ${GITHUB_REPO}"
 
-# Check yq is available
+# Check dependencies
 if ! command -v yq &>/dev/null; then
-    echo "[ERROR] yq is required. Install with: brew install yq"
+    log_error "yq is required. Install with: brew install yq"
     exit 1
 fi
 
-# Create output directory
-mkdir -p "${OUTPUT_DIR}/${ENVIRONMENT}"
+if ! command -v uv &>/dev/null; then
+    log_error "uv is required. Install with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    exit 1
+fi
 
-# Clean previous state for this environment
-rm -f "${OUTPUT_DIR}/${ENVIRONMENT}"/*.yaml
+# Create output directory and clean previous state
+mkdir -p "${OUTPUT_DIR}/${ENVIRONMENT}"
+rm -rf "${OUTPUT_DIR}/${ENVIRONMENT:?}"/*
 
 #===============================================================================
 # Generate ArgoCD Project
@@ -120,35 +130,29 @@ log_info "Generated: project.yaml"
 helm_count=$(yq eval '.helm | length' "${APPS_FILE}" 2>/dev/null || echo "0")
 
 for ((i=0; i<helm_count; i++)); do
-    enabled=$(yq eval ".helm[${i}].enabled" "${APPS_FILE}" 2>/dev/null || echo "true")
+    enabled=$(yq eval ".helm[${i}].enabled // true" "${APPS_FILE}")
+    [[ "${enabled}" != "true" ]] && continue
 
-    if [[ "${enabled}" == "true" ]]; then
-        name=$(yq eval ".helm[${i}].name" "${APPS_FILE}")
-        chart=$(yq eval ".helm[${i}].chart" "${APPS_FILE}")
-        version=$(yq eval ".helm[${i}].version // \"*\"" "${APPS_FILE}")
-        namespace=$(yq eval ".helm[${i}].namespace" "${APPS_FILE}")
-        values_file=$(yq eval ".helm[${i}].values" "${APPS_FILE}")
+    name=$(yq eval ".helm[${i}].name" "${APPS_FILE}")
+    chart=$(yq eval ".helm[${i}].chart" "${APPS_FILE}")
+    version=$(yq eval ".helm[${i}].version // \"*\"" "${APPS_FILE}")
+    namespace=$(yq eval ".helm[${i}].namespace // \"apps\"" "${APPS_FILE}")
+    values_file=$(yq eval ".helm[${i}].values // \"\"" "${APPS_FILE}")
 
-        # Extract repo and chart name from chart (e.g., bitnami/valkey -> bitnami, valkey)
-        repo_name=$(echo "${chart}" | cut -d'/' -f1)
-        chart_name=$(echo "${chart}" | cut -d'/' -f2)
+    repo_name=$(echo "${chart}" | cut -d'/' -f1)
+    chart_name=$(echo "${chart}" | cut -d'/' -f2)
+    repo_url=$(yq eval ".repositories.${repo_name} // \"\"" "${APPS_FILE}")
 
-        # Get repo URL from repositories section
-        repo_url=$(yq eval ".repositories.${repo_name}" "${APPS_FILE}" 2>/dev/null || echo "")
+    if [[ -z "${repo_url}" ]]; then
+        log_warn "Repository ${repo_name} not found in apps.yaml, skipping ${name}"
+        continue
+    fi
 
-        if [[ -z "${repo_url}" ]]; then
-            log_warn "Repository ${repo_name} not found in apps.yaml, skipping ${name}"
-            continue
-        fi
-
-        # Generate Application manifest
-        # For OCI registries, ArgoCD requires repoURL (without oci:// prefix) + chart (name)
-        if [[ "${repo_url}" == oci://* ]]; then
-            # Strip oci:// prefix for ArgoCD - it auto-detects OCI format
-            oci_repo_url="${repo_url#oci://}"
-            cat > "${OUTPUT_DIR}/${ENVIRONMENT}/${name}.yaml" <<EOFOCI
-# Auto-generated from apps.yaml - DO NOT EDIT MANUALLY
-# Regenerate with: ./scripts/generate-argocd-state.sh ${ENVIRONMENT}
+    # Handle OCI vs traditional Helm repos
+    if [[ "${repo_url}" == oci://* ]]; then
+        oci_repo_url="${repo_url#oci://}"
+        cat > "${OUTPUT_DIR}/${ENVIRONMENT}/${name}.yaml" <<EOF
+# Auto-generated - DO NOT EDIT. Regenerate with: ./scripts/generate-argocd-state.sh ${ENVIRONMENT}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -166,12 +170,10 @@ spec:
     repoURL: ${oci_repo_url}
     chart: ${chart_name}
     targetRevision: "${version}"
-EOFOCI
-        else
-            # Traditional Helm repo format
-            cat > "${OUTPUT_DIR}/${ENVIRONMENT}/${name}.yaml" <<EOFHELM
-# Auto-generated from apps.yaml - DO NOT EDIT MANUALLY
-# Regenerate with: ./scripts/generate-argocd-state.sh ${ENVIRONMENT}
+EOF
+    else
+        cat > "${OUTPUT_DIR}/${ENVIRONMENT}/${name}.yaml" <<EOF
+# Auto-generated - DO NOT EDIT. Regenerate with: ./scripts/generate-argocd-state.sh ${ENVIRONMENT}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -189,20 +191,19 @@ spec:
     repoURL: ${repo_url}
     chart: ${chart_name}
     targetRevision: "${version}"
-EOFHELM
-        fi
+EOF
+    fi
 
-        # Append helm values to the manifest
-        cat >> "${OUTPUT_DIR}/${ENVIRONMENT}/${name}.yaml" <<EOF
+    # Append helm values
+    cat >> "${OUTPUT_DIR}/${ENVIRONMENT}/${name}.yaml" <<EOF
     helm:
       releaseName: ${name}
       valueFiles: []
       values: |
-$(if [[ -f "${PROJECT_ROOT}/${values_file}" ]]; then
-    # Indent values file content
+$(if [[ -n "${values_file}" && -f "${PROJECT_ROOT}/${values_file}" ]]; then
     sed 's/^/        /' "${PROJECT_ROOT}/${values_file}"
 else
-    echo "        # Values file not found: ${values_file}"
+    echo "        # No values file"
 fi)
   destination:
     server: https://kubernetes.default.svc
@@ -217,55 +218,48 @@ fi)
       - ServerSideApply=true
 EOF
 
-        log_info "Generated: ${name}.yaml (Helm)"
-    fi
+    log_info "Generated: ${name}.yaml (Helm)"
 done
 
 #===============================================================================
-# Generate Kustomize Applications
+# Generate Traditional Apps (k3sapp CLI)
 #===============================================================================
-kustomize_count=$(yq eval '.kustomize | length' "${APPS_FILE}" 2>/dev/null || echo "0")
+apps_count=$(yq eval '.apps | length' "${APPS_FILE}" 2>/dev/null || echo "0")
 
-# Build image list from apps.yaml (apps section)
-# These will be substituted by ArgoCD's kustomize image transformer
-generate_images_section() {
-    local images=""
-    local apps_count
-    apps_count=$(yq eval '.apps | length' "${APPS_FILE}" 2>/dev/null || echo "0")
+for ((i=0; i<apps_count; i++)); do
+    enabled=$(yq eval ".apps[${i}].enabled // true" "${APPS_FILE}")
+    [[ "${enabled}" != "true" ]] && continue
 
-    for ((j=0; j<apps_count; j++)); do
-        local app_enabled
-        app_enabled=$(yq eval ".apps[${j}].enabled" "${APPS_FILE}" 2>/dev/null || echo "true")
+    name=$(yq eval ".apps[${i}].name" "${APPS_FILE}")
+    namespace=$(yq eval ".apps[${i}].namespace // \"apps\"" "${APPS_FILE}")
+    app_path=$(yq eval ".apps[${i}].path // \"apps/${name}\"" "${APPS_FILE}")
 
-        if [[ "${app_enabled}" == "true" ]]; then
-            local app_name
-            app_name=$(yq eval ".apps[${j}].name" "${APPS_FILE}")
-            # Map base image name to registry image
-            # Base uses: <app_name>-app:latest, registry uses: <registry>/<app_name>:latest
-            images="${images}
-      - ${app_name}-app=${REGISTRY}/${app_name}:latest"
-        fi
-    done
+    log_info "Generating app manifests for ${name}..."
 
-    echo "${images}"
-}
+    APP_MANIFEST_DIR="${OUTPUT_DIR}/${ENVIRONMENT}/apps/${name}"
+    mkdir -p "${APP_MANIFEST_DIR}"
 
-for ((i=0; i<kustomize_count; i++)); do
-    enabled=$(yq eval ".kustomize[${i}].enabled" "${APPS_FILE}" 2>/dev/null || echo "true")
+    # Generate manifests using k3sapp CLI
+    if ! uv run --project "${PROJECT_ROOT}/libs/k3sapp" k3sapp generate "${name}" \
+        --env "${ENVIRONMENT}" \
+        --output "${APP_MANIFEST_DIR}" 2>&1; then
+        log_warn "Failed to generate manifests for ${name}, skipping"
+        rm -rf "${APP_MANIFEST_DIR}"
+        continue
+    fi
 
-    if [[ "${enabled}" == "true" ]]; then
-        name=$(yq eval ".kustomize[${i}].name" "${APPS_FILE}")
-        path_template=$(yq eval ".kustomize[${i}].path" "${APPS_FILE}")
+    # Check for generated file and rename to manifests.yaml
+    if [[ -f "${APP_MANIFEST_DIR}/${name}.yaml" ]]; then
+        mv "${APP_MANIFEST_DIR}/${name}.yaml" "${APP_MANIFEST_DIR}/manifests.yaml"
+    elif [[ ! -f "${APP_MANIFEST_DIR}/manifests.yaml" ]]; then
+        log_warn "No manifests generated for ${name}"
+        rm -rf "${APP_MANIFEST_DIR}"
+        continue
+    fi
 
-        # Substitute environment in path
-        path="${path_template//\$\{PLATFORM_ENV\}/${ENVIRONMENT}}"
-
-        # Generate image mappings
-        IMAGES_SECTION=$(generate_images_section)
-
-        cat > "${OUTPUT_DIR}/${ENVIRONMENT}/${name}-kustomize.yaml" <<EOF
-# Auto-generated from apps.yaml - DO NOT EDIT MANUALLY
-# Regenerate with: ./scripts/generate-argocd-state.sh ${ENVIRONMENT}
+    # Create ArgoCD Application
+    cat > "${OUTPUT_DIR}/${ENVIRONMENT}/${name}-app.yaml" <<EOF
+# Auto-generated - DO NOT EDIT. Regenerate with: ./scripts/generate-argocd-state.sh ${ENVIRONMENT}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -274,12 +268,11 @@ metadata:
   labels:
     app.kubernetes.io/part-of: k3s-platform
     environment: ${ENVIRONMENT}
-    type: kustomize
+    type: app
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: k3s-platform
-  # Ignore replicas field - KEDA/HPA manages scaling
   ignoreDifferences:
     - group: apps
       kind: Deployment
@@ -288,14 +281,13 @@ spec:
   source:
     repoURL: ${GITHUB_REPO}
     targetRevision: HEAD
-    path: ${path}
-    kustomize:
-      # Image substitutions generated from apps.yaml and configs/.env
-      # Base images are mapped to environment-specific registry
-      images:${IMAGES_SECTION}
+    path: argocd-state/${ENVIRONMENT}/apps/${name}
+    directory:
+      recurse: false
+      include: 'manifests.yaml'
   destination:
     server: https://kubernetes.default.svc
-    namespace: apps
+    namespace: ${namespace}
   syncPolicy:
     automated:
       prune: true
@@ -307,58 +299,51 @@ spec:
       - RespectIgnoreDifferences=true
 EOF
 
-        log_info "Generated: ${name}-kustomize.yaml (Kustomize)"
-    fi
+    log_info "Generated: ${name}-app.yaml + apps/${name}/manifests.yaml"
 done
 
 #===============================================================================
-# Generate Serverless Applications
+# Generate Serverless Applications (k3sfn CLI)
 #===============================================================================
 serverless_count=$(yq eval '.serverless | length' "${APPS_FILE}" 2>/dev/null || echo "0")
 
 for ((i=0; i<serverless_count; i++)); do
-    enabled=$(yq eval ".serverless[${i}].enabled" "${APPS_FILE}" 2>/dev/null || echo "true")
+    enabled=$(yq eval ".serverless[${i}].enabled // true" "${APPS_FILE}")
+    [[ "${enabled}" != "true" ]] && continue
 
-    if [[ "${enabled}" == "true" ]]; then
-        name=$(yq eval ".serverless[${i}].name" "${APPS_FILE}")
-        path=$(yq eval ".serverless[${i}].path" "${APPS_FILE}")
-        namespace=$(yq eval ".serverless[${i}].namespace" "${APPS_FILE}")
+    name=$(yq eval ".serverless[${i}].name" "${APPS_FILE}")
+    namespace=$(yq eval ".serverless[${i}].namespace // \"apps\"" "${APPS_FILE}")
+    app_path=$(yq eval ".serverless[${i}].path // \"apps/${name}\"" "${APPS_FILE}")
 
-        log_info "Generating serverless manifests for ${name}..."
+    log_info "Generating serverless manifests for ${name}..."
 
-        # Create output directory for this serverless app's manifests
-        SERVERLESS_MANIFEST_DIR="${OUTPUT_DIR}/${ENVIRONMENT}/serverless/${name}"
-        mkdir -p "${SERVERLESS_MANIFEST_DIR}"
+    SERVERLESS_MANIFEST_DIR="${OUTPUT_DIR}/${ENVIRONMENT}/serverless/${name}"
+    mkdir -p "${SERVERLESS_MANIFEST_DIR}"
 
-        # Generate manifests using k3sfn CLI locally on deployer machine
-        if ! uv run python -m k3sfn.cli generate "${PROJECT_ROOT}/${path}" \
-            --name "${name}" \
-            --output "${SERVERLESS_MANIFEST_DIR}" \
-            --namespace "${namespace}" \
-            --registry "${REGISTRY}" 2>/dev/null; then
-            log_warn "Failed to generate manifests for ${name}, skipping"
-            rm -rf "${SERVERLESS_MANIFEST_DIR}"
-            continue
-        fi
+    # Generate manifests using k3sfn CLI with apps.yaml integration
+    if ! uv run --project "${PROJECT_ROOT}/libs/k3sfn" k3sfn generate \
+        --name "${name}" \
+        --from-apps-yaml \
+        --env "${ENVIRONMENT}" \
+        --ingress "${INGRESS_TYPE}" \
+        --output "${SERVERLESS_MANIFEST_DIR}" 2>&1; then
+        log_warn "Failed to generate manifests for ${name}, skipping"
+        rm -rf "${SERVERLESS_MANIFEST_DIR}"
+        continue
+    fi
 
-        # Verify manifests were generated
-        if [[ ! -f "${SERVERLESS_MANIFEST_DIR}/manifests.yaml" ]]; then
-            log_warn "No manifests.yaml generated for ${name}"
-            rm -rf "${SERVERLESS_MANIFEST_DIR}"
-            continue
-        fi
+    if [[ ! -f "${SERVERLESS_MANIFEST_DIR}/manifests.yaml" ]]; then
+        log_warn "No manifests.yaml generated for ${name}"
+        rm -rf "${SERVERLESS_MANIFEST_DIR}"
+        continue
+    fi
 
-        # Remove files we don't need in argocd-state (Dockerfile is for CI/CD)
-        rm -f "${SERVERLESS_MANIFEST_DIR}/Dockerfile" "${SERVERLESS_MANIFEST_DIR}/k3sfn.json"
+    # Remove files not needed in argocd-state (Dockerfile is for CI/CD)
+    rm -f "${SERVERLESS_MANIFEST_DIR}/Dockerfile" "${SERVERLESS_MANIFEST_DIR}/k3sfn.json"
 
-        # Create ArgoCD Application that points to the generated manifests in this repo
-        cat > "${OUTPUT_DIR}/${ENVIRONMENT}/${name}-serverless.yaml" <<EOF
-# Auto-generated from apps.yaml - DO NOT EDIT MANUALLY
-# Regenerate with: ./scripts/generate-argocd-state.sh ${ENVIRONMENT}
-#
-# NOTE: You must build and push the image before ArgoCD can deploy this:
-#   docker build -t ${REGISTRY}/${name}:latest ${path}
-#   docker push ${REGISTRY}/${name}:latest
+    # Create ArgoCD Application
+    cat > "${OUTPUT_DIR}/${ENVIRONMENT}/${name}-serverless.yaml" <<EOF
+# Auto-generated - DO NOT EDIT. Regenerate with: ./scripts/generate-argocd-state.sh ${ENVIRONMENT}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -372,7 +357,6 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: k3s-platform
-  # Ignore replicas field - KEDA manages scaling for serverless functions
   ignoreDifferences:
     - group: apps
       kind: Deployment
@@ -399,17 +383,95 @@ spec:
       - RespectIgnoreDifferences=true
 EOF
 
-        log_info "Generated: ${name}-serverless.yaml (Application)"
-        log_info "Generated: serverless/${name}/manifests.yaml (raw manifests)"
+    log_info "Generated: ${name}-serverless.yaml + serverless/${name}/manifests.yaml"
+done
+
+#===============================================================================
+# Generate Docker Compose Projects (k3scompose CLI)
+#===============================================================================
+compose_count=$(yq eval '.compose | length' "${APPS_FILE}" 2>/dev/null || echo "0")
+
+for ((i=0; i<compose_count; i++)); do
+    enabled=$(yq eval ".compose[${i}].enabled // true" "${APPS_FILE}")
+    [[ "${enabled}" != "true" ]] && continue
+
+    name=$(yq eval ".compose[${i}].name" "${APPS_FILE}")
+    namespace=$(yq eval ".compose[${i}].namespace // \"apps\"" "${APPS_FILE}")
+    compose_path=$(yq eval ".compose[${i}].path // \"apps/${name}\"" "${APPS_FILE}")
+
+    log_info "Generating compose manifests for ${name}..."
+
+    COMPOSE_MANIFEST_DIR="${OUTPUT_DIR}/${ENVIRONMENT}/compose/${name}"
+    mkdir -p "${COMPOSE_MANIFEST_DIR}"
+
+    # Generate manifests using k3scompose CLI
+    if ! uv run --project "${PROJECT_ROOT}/libs/k3scompose" k3scompose generate "${name}" \
+        --env "${ENVIRONMENT}" \
+        --output "${COMPOSE_MANIFEST_DIR}" 2>&1; then
+        log_warn "Failed to generate manifests for ${name}, skipping"
+        rm -rf "${COMPOSE_MANIFEST_DIR}"
+        continue
     fi
+
+    # Check for generated manifests
+    if [[ -f "${COMPOSE_MANIFEST_DIR}/${name}.yaml" ]]; then
+        mv "${COMPOSE_MANIFEST_DIR}/${name}.yaml" "${COMPOSE_MANIFEST_DIR}/manifests.yaml"
+    elif [[ ! -f "${COMPOSE_MANIFEST_DIR}/manifests.yaml" ]]; then
+        log_warn "No manifests generated for ${name}"
+        rm -rf "${COMPOSE_MANIFEST_DIR}"
+        continue
+    fi
+
+    # Create ArgoCD Application
+    cat > "${OUTPUT_DIR}/${ENVIRONMENT}/${name}-compose.yaml" <<EOF
+# Auto-generated - DO NOT EDIT. Regenerate with: ./scripts/generate-argocd-state.sh ${ENVIRONMENT}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ${name}
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: k3s-platform
+    environment: ${ENVIRONMENT}
+    type: compose
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: k3s-platform
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+  source:
+    repoURL: ${GITHUB_REPO}
+    targetRevision: HEAD
+    path: argocd-state/${ENVIRONMENT}/compose/${name}
+    directory:
+      recurse: false
+      include: 'manifests.yaml'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ${namespace}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
+EOF
+
+    log_info "Generated: ${name}-compose.yaml + compose/${name}/manifests.yaml"
 done
 
 #===============================================================================
 # Generate kustomization.yaml for the environment
 #===============================================================================
 cat > "${OUTPUT_DIR}/${ENVIRONMENT}/kustomization.yaml" <<EOF
-# Auto-generated - DO NOT EDIT MANUALLY
-# Regenerate with: ./scripts/generate-argocd-state.sh ${ENVIRONMENT}
+# Auto-generated - DO NOT EDIT. Regenerate with: ./scripts/generate-argocd-state.sh ${ENVIRONMENT}
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -439,8 +501,10 @@ echo "==========================================================================
 log_success "ArgoCD state generated successfully!"
 echo "================================================================================"
 echo ""
-echo "Generated files:"
-ls -la "${OUTPUT_DIR}/${ENVIRONMENT}/"
+echo "Generated structure:"
+find "${OUTPUT_DIR}/${ENVIRONMENT}" -type f -name "*.yaml" | sort | while read -r f; do
+    echo "  ${f#${PROJECT_ROOT}/}"
+done
 echo ""
 echo "Next steps:"
 echo "  1. Review the generated files in argocd-state/${ENVIRONMENT}/"

@@ -1,0 +1,201 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi
+  namespace: apps
+  labels:
+    app: fastapi
+    k3sapp.io/app: fastapi
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: fastapi
+  template:
+    metadata:
+      labels:
+        app: fastapi
+        k3sapp.io/app: fastapi
+    spec:
+      containers:
+      - name: fastapi
+        image: us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform/fastapi:latest
+        ports:
+        - containerPort: 8000
+          protocol: TCP
+          name: http
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+          limits:
+            memory: 512Mi
+        startupProbe:
+          periodSeconds: 10
+          timeoutSeconds: 1
+          successThreshold: 1
+          failureThreshold: 30
+          httpGet:
+            path: /health
+            port: 8000
+        readinessProbe:
+          periodSeconds: 10
+          timeoutSeconds: 1
+          successThreshold: 1
+          failureThreshold: 3
+          httpGet:
+            path: /health
+            port: 8000
+        livenessProbe:
+          periodSeconds: 10
+          timeoutSeconds: 1
+          successThreshold: 1
+          failureThreshold: 3
+          httpGet:
+            path: /health
+            port: 8000
+      imagePullSecrets:
+      - name: artifact-registry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi
+  namespace: apps
+  labels:
+    app: fastapi
+    k3sapp.io/app: fastapi
+spec:
+  selector:
+    app: fastapi
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
+---
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: fastapi-http
+  namespace: apps
+  labels:
+    app: fastapi
+    k3sapp.io/app: fastapi
+spec:
+  hosts:
+  - fastapi.apps
+  pathPrefixes:
+  - /fastapi
+  scaleTargetRef:
+    name: fastapi
+    kind: Deployment
+    apiVersion: apps/v1
+    service: fastapi
+    port: 80
+  replicas:
+    min: 0
+    max: 10
+  scalingMetric:
+    requestRate:
+      granularity: 1s
+      targetValue: 100
+      window: 1m
+  scaledownPeriod: 300
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keda-route-fastapi
+  namespace: apps
+  labels:
+    app: fastapi
+    k3sapp.io/app: fastapi
+    k3sapp.io/component: keda-route
+spec:
+  type: ExternalName
+  externalName: keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fastapi-haproxy
+  namespace: apps
+  labels:
+    app: fastapi
+    k3sapp.io/app: fastapi
+    k3sapp.io/ingress: haproxy
+  annotations:
+    haproxy-ingress.github.io/timeout-connect: 10s
+    haproxy-ingress.github.io/timeout-server: 180s
+    haproxy-ingress.github.io/timeout-client: 180s
+    haproxy-ingress.github.io/timeout-queue: 180s
+    haproxy-ingress.github.io/retry-on: conn-failure,empty-response,response-timeout
+    haproxy-ingress.github.io/retries: '3'
+    haproxy-ingress.github.io/config-backend: 'http-request set-header Host fastapi.apps
+
+      http-request set-path %[path,regsub(^/fastapi/,/),regsub(^/fastapi$,/)]
+
+      '
+spec:
+  ingressClassName: haproxy
+  rules:
+  - http:
+      paths:
+      - path: /fastapi
+        pathType: Prefix
+        backend:
+          service:
+            name: keda-route-fastapi
+            port:
+              number: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fastapi-ingress
+  namespace: apps
+  labels:
+    app: fastapi
+    k3sapp.io/app: fastapi
+    k3sapp.io/visibility: public
+spec:
+  podSelector:
+    matchLabels:
+      app: fastapi
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: haproxy-ingress
+    ports:
+    - protocol: TCP
+      port: 8000
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: keda
+    ports:
+    - protocol: TCP
+      port: 8000
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fastapi
+  namespace: apps
+  labels:
+    app: fastapi
+    k3sapp.io/app: fastapi
+spec:
+  selector:
+    matchLabels:
+      app: fastapi
+  minAvailable: 1

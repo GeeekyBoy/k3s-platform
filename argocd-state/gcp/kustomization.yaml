@@ -1,11 +1,10 @@
-# Auto-generated - DO NOT EDIT MANUALLY
-# Regenerate with: ./scripts/generate-argocd-state.sh gcp
+# Auto-generated - DO NOT EDIT. Regenerate with: ./scripts/generate-argocd-state.sh gcp
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
   - project.yaml
-  - apps-kustomize.yaml
+  - fastapi-app.yaml
   - serverless-example-serverless.yaml
   - valkey.yaml
 

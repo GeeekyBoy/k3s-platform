@@ -1,7 +1,12 @@
-# Tiltfile for K3s Platform - Dynamic Configuration
+# Tiltfile for K3s Platform - Dynamic Configuration (v2)
 # ================================================================================
-# This Tiltfile reads apps.yaml and automatically configures all applications.
+# This Tiltfile reads apps.yaml and uses CLI tools to generate K8s manifests.
 # No manual editing needed when adding/removing apps!
+#
+# CLI Tools:
+#   - k3sapp:     Generate manifests for traditional container apps
+#   - k3sfn:      Generate manifests for serverless functions
+#   - k3scompose: Generate manifests for Docker Compose projects
 #
 # Usage:
 #   tilt up                         # Start development environment
@@ -12,7 +17,7 @@
 # Prerequisites:
 #   - k3d cluster running (./providers/dev/setup.sh --no-tilt)
 #   - kubectl configured for dev cluster
-#   - uv installed for serverless functions
+#   - uv installed for Python package management
 #
 # Configuration:
 #   - Edit apps.yaml to add/remove services
@@ -121,7 +126,7 @@ for helm_app in helm_apps:
         )
 
 # ============================================================================
-# Traditional Apps (FastAPI, etc.)
+# Traditional Apps (FastAPI, etc.) - Uses k3sapp CLI
 # ============================================================================
 
 traditional_apps = apps_config.get('apps', [])
@@ -135,32 +140,50 @@ for app in traditional_apps:
 
     app_path = app.get('path', 'apps/' + name)
     namespace = app.get('namespace', 'apps')
-    dockerfile_dev = app.get('dockerfile_dev', 'Dockerfile.dev')
+    build_config = app.get('build', {})
+    dockerfile_dev = build_config.get('dockerfile_dev', 'Dockerfile.dev')
     dev_config = app.get('dev', {})
+    generated_dir = './k8s/generated/dev'
+
+    # Generate manifests using k3sapp CLI
+    local_resource(
+        '%s-generate' % name,
+        cmd='uv run --project libs/k3sapp k3sapp generate %s --env dev -o %s' % (name, generated_dir),
+        deps=[
+            './apps.yaml',
+            './%s/' % app_path,
+            './libs/k3sapp/k3sapp/',
+        ],
+        labels=['app'],
+    )
 
     # Build with live update for dev mode
-    sync_rules = []
-    for sync in dev_config.get('sync', []):
-        sync_rules.append(
-            sync('./%s/%s' % (app_path, sync['src']), sync['dest'])
+    live_update_rules = []
+    for sync_rule in dev_config.get('sync', []):
+        live_update_rules.append(
+            sync('./%s/%s' % (app_path, sync_rule['src']), sync_rule['dest'])
         )
 
     docker_build(
         '%s-app' % name,
         context='./%s' % app_path,
         dockerfile='./%s/%s' % (app_path, dockerfile_dev),
-        live_update=sync_rules if dev_config.get('live_update', False) else [],
+        live_update=live_update_rules if dev_config.get('live_update', False) else [],
         only=[
             './%s/' % app_path,
         ],
     )
 
-    # Apply Kubernetes manifests via kustomize (use dev overlay for Tilt)
-    k8s_yaml(kustomize('./k8s/overlays/dev'))
+    # Apply generated Kubernetes manifests
+    k8s_yaml('%s/%s.yaml' % (generated_dir, name))
 
     # Configure resource with port forwards
     port = dev_config.get('port', 8000)
-    resource_deps = []
+    container_ports = app.get('container', {}).get('ports', [])
+    if container_ports:
+        port = container_ports[0].get('container_port', port)
+
+    resource_deps = ['%s-generate' % name]
 
     # Add valkey dependency if valkey is enabled
     if not cfg.get('no-valkey'):
@@ -179,7 +202,7 @@ for app in traditional_apps:
     )
 
 # ============================================================================
-# Serverless Functions (k3sfn)
+# Serverless Functions (k3sfn) - Uses k3sfn CLI with apps.yaml integration
 # ============================================================================
 
 serverless_apps = apps_config.get('serverless', [])
@@ -197,13 +220,17 @@ for serverless_app in serverless_apps:
     port_base = dev_config.get('port_base', 8081)
     live_update_enabled = dev_config.get('live_update', True)
 
-    generated_dir = './%s/generated' % app_path
+    generated_dir = './k8s/generated/dev/%s' % name
 
-    # Generate manifests for K8s resources
+    # Generate manifests using k3sfn CLI with apps.yaml integration
     local_resource(
         '%s-generate' % name,
-        cmd='uv run python3 -m k3sfn.cli generate ./%s --name %s --output %s --namespace %s --registry registry.localhost:5111' % (app_path, name, generated_dir, namespace),
-        deps=['./%s/functions/' % app_path, './libs/k3sfn/k3sfn/'],
+        cmd='uv run --project libs/k3sfn k3sfn generate --name %s --from-apps-yaml --env dev -o %s' % (name, generated_dir),
+        deps=[
+            './apps.yaml',
+            './%s/functions/' % app_path,
+            './libs/k3sfn/k3sfn/',
+        ],
         labels=['serverless'],
     )
 
@@ -215,7 +242,7 @@ for serverless_app in serverless_apps:
             sync('./libs/k3sfn/k3sfn/', '/app/libs/k3sfn/k3sfn/'),
         ]
 
-    # Check if dev Dockerfile exists
+    # Check if dev Dockerfile exists, otherwise use generated one
     dockerfile_dev = './%s/Dockerfile.dev' % app_path
     if not os.path.exists(dockerfile_dev):
         dockerfile_dev = '%s/Dockerfile' % generated_dir
@@ -235,16 +262,6 @@ for serverless_app in serverless_apps:
     # Apply serverless manifests
     k8s_yaml('%s/manifests.yaml' % generated_dir)
 
-    # Dynamically discover functions and create resources
-    # We read the generated k3sfn.json for function info
-    local_resource(
-        '%s-discover' % name,
-        cmd='cat %s/k3sfn.json 2>/dev/null || echo "[]"' % generated_dir,
-        deps=['%s/k3sfn.json' % generated_dir],
-        labels=['serverless'],
-        allow_parallel=True,
-    )
-
     # Create resources for known HTTP functions with port forwards
     # Port assignments are dynamic based on function discovery
     current_port = port_base
@@ -255,7 +272,8 @@ for serverless_app in serverless_apps:
 
     if os.path.exists(k3sfn_json_path):
         k3sfn_data = read_json(k3sfn_json_path)
-        functions_to_configure = k3sfn_data if k3sfn_data else []
+        if k3sfn_data and 'functions' in k3sfn_data:
+            functions_to_configure = k3sfn_data.get('functions', [])
 
     for func in functions_to_configure:
         func_name = func.get('name', '')

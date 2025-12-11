@@ -1,4 +1,4 @@
-# K3s Platform - Application Configuration
+# K3s Platform - Application Configuration v2
 # ==============================================================================
 # This file is the single source of truth for all deployments.
 #
@@ -9,13 +9,40 @@
 #
 # Deployment Types:
 #   - helm:       Third-party Helm charts (databases, etc.)
-#   - kustomize:  Your services deployed via k8s/overlays
 #   - serverless: k3sfn functions with scale-to-zero
-#   - apps:       Traditional container applications
+#   - apps:       Traditional container applications (k3sapp)
+#   - compose:    Docker Compose projects (k3scompose)
 #
 # To add/remove services, just enable/disable entries below.
 # No script or Tiltfile changes needed!
 # ==============================================================================
+
+version: "2"
+
+# Global defaults applied across all environments
+defaults:
+  namespace: apps
+  registry:
+    local: ""
+    dev: ""
+    gcp: "us-central1-docker.pkg.dev/${PROJECT_ID}/k3s-platform"
+  ingress:
+    local: traefik
+    dev: traefik
+    gcp: haproxy
+
+# Environment-specific global settings
+environments:
+  local:
+    domain: "localhost"
+    tls: false
+  dev:
+    domain: "localhost"
+    tls: false
+  gcp:
+    domain: "${GCP_DOMAIN}"
+    tls: true
+    tls_secret: "letsencrypt-prod"
 
 # Helm Charts (third-party services)
 helm:
@@ -26,13 +53,6 @@ helm:
     values: apps/valkey/values.yaml
     enabled: true
 
-# Kustomize Deployments (your apps via k8s/base + overlays)
-# The overlay is auto-selected based on environment (dev, local, gcp)
-kustomize:
-  - name: apps
-    path: k8s/overlays/${PLATFORM_ENV}
-    enabled: true
-
 # Serverless Functions (k3sfn with @http, @queue, @schedule decorators)
 # Functions are discovered automatically, built, and deployed with scale-to-zero
 serverless:
@@ -40,24 +60,72 @@ serverless:
     path: apps/serverless-example
     namespace: apps
     enabled: true
+    security:
+      visibility: public
+    local:
+      port_base: 8081
     dev:
       port_base: 8081
       live_update: true
 
-# Traditional Container Apps (Dockerfile-based)
+# Traditional Container Apps (k3sapp - Dockerfile-based)
 apps:
   - name: fastapi
     path: apps/fastapi
     namespace: apps
     enabled: true
-    dockerfile: Dockerfile
-    dockerfile_dev: Dockerfile.dev
+    build:
+      dockerfile: Dockerfile
+      dockerfile_dev: Dockerfile.dev
+    container:
+      ports:
+        - name: http
+          container_port: 8000
+          service_port: 80
+    resources:
+      memory: "256Mi"
+      cpu: "100m"
+      memory_limit: "512Mi"
+    scaling:
+      type: keda-http
+      min_instances: 0
+      max_instances: 10
+      target_pending_requests: 100
+    probes:
+      startup:
+        type: http
+        path: /health
+        port: 8000
+        failure_threshold: 30
+      readiness:
+        type: http
+        path: /health
+        port: 8000
+      liveness:
+        type: http
+        path: /health
+        port: 8000
+    ingress:
+      enabled: true
+      path: /fastapi
+      strip_prefix: true
+    security:
+      visibility: public
+      network_policy:
+        enabled: true
+    local:
+      scaling:
+        type: none
+      replicas: 1
     dev:
       port: 8000
       live_update: true
       sync:
         - src: src/
           dest: /app/src/
+    gcp:
+      pod_disruption_budget:
+        min_available: 1
 
 # Helm Repository URLs
 repositories:

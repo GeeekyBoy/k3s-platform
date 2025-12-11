@@ -1,5 +1,4 @@
-# Auto-generated from apps.yaml - DO NOT EDIT MANUALLY
-# Regenerate with: ./scripts/generate-argocd-state.sh gcp
+# Auto-generated - DO NOT EDIT. Regenerate with: ./scripts/generate-argocd-state.sh gcp
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

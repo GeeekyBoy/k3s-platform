@@ -10,12 +10,147 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
 from .decorators import FunctionRegistry
 from .types import FunctionMetadata, TriggerType, Visibility
+
+
+# ============================================================================
+# apps.yaml Integration (Phase 4)
+# ============================================================================
+
+def find_apps_yaml() -> Optional[Path]:
+    """
+    Find apps.yaml by searching up from current directory.
+
+    Returns:
+        Path to apps.yaml or None if not found
+    """
+    current = Path.cwd()
+    for parent in [current] + list(current.parents):
+        candidate = parent / "apps.yaml"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def load_apps_yaml(path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Load apps.yaml configuration.
+
+    Args:
+        path: Optional path to apps.yaml. If not provided, searches up from cwd.
+
+    Returns:
+        Parsed YAML content as dict
+
+    Raises:
+        FileNotFoundError: If apps.yaml not found
+    """
+    if path:
+        apps_path = Path(path)
+    else:
+        apps_path = find_apps_yaml()
+
+    if not apps_path or not apps_path.exists():
+        raise FileNotFoundError("apps.yaml not found")
+
+    with open(apps_path) as f:
+        return yaml.safe_load(f)
+
+
+def get_serverless_config(
+    app_name: str,
+    apps_yaml_path: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Get serverless function configuration from apps.yaml.
+
+    Args:
+        app_name: Name of the serverless app
+        apps_yaml_path: Optional path to apps.yaml
+
+    Returns:
+        Serverless config dict or None if not found
+    """
+    try:
+        config = load_apps_yaml(apps_yaml_path)
+    except FileNotFoundError:
+        return None
+
+    for serverless in config.get("serverless", []):
+        if serverless.get("name") == app_name:
+            return serverless
+    return None
+
+
+def get_defaults_for_env(
+    apps_yaml_path: Optional[str] = None,
+    env: str = "local",
+) -> Dict[str, Any]:
+    """
+    Get defaults from apps.yaml for an environment.
+
+    Args:
+        apps_yaml_path: Optional path to apps.yaml
+        env: Environment name (local, dev, gcp)
+
+    Returns:
+        Dict with namespace, registry, ingress settings
+    """
+    try:
+        config = load_apps_yaml(apps_yaml_path)
+    except FileNotFoundError:
+        return {
+            "namespace": "apps",
+            "registry": "",
+            "ingress": "traefik",
+        }
+
+    defaults = config.get("defaults", {})
+    return {
+        "namespace": defaults.get("namespace", "apps"),
+        "registry": defaults.get("registry", {}).get(env, ""),
+        "ingress": defaults.get("ingress", {}).get(env, "traefik"),
+    }
+
+
+def get_enabled_serverless_apps(
+    env: str = "local",
+    apps_yaml_path: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Get list of enabled serverless apps for the given environment.
+
+    Args:
+        env: Target environment (local, dev, gcp)
+        apps_yaml_path: Optional path to apps.yaml
+
+    Returns:
+        List of enabled serverless app configs
+    """
+    try:
+        config = load_apps_yaml(apps_yaml_path)
+    except FileNotFoundError:
+        return []
+
+    enabled = []
+    for serverless in config.get("serverless", []):
+        # Check base enabled flag
+        if not serverless.get("enabled", True):
+            continue
+
+        # Check environment-specific enabled flag
+        env_override = serverless.get(env, {})
+        if env_override.get("enabled") is False:
+            continue
+
+        enabled.append(serverless)
+
+    return enabled
 
 
 def discover_functions(source_dir: str, module_name: str = "functions") -> List[FunctionMetadata]:
@@ -1031,22 +1166,72 @@ def main():
 
     # Generate command
     gen_parser = subparsers.add_parser("generate", help="Generate Kubernetes manifests")
-    gen_parser.add_argument("source_dir", help="Source directory containing functions")
-    gen_parser.add_argument("--name", "-n", required=True, help="Application name")
+    gen_parser.add_argument("source_dir", nargs="?", help="Source directory containing functions")
+    gen_parser.add_argument("--name", "-n", help="Application name")
     gen_parser.add_argument("--output", "-o", default="./generated", help="Output directory")
-    gen_parser.add_argument("--namespace", default="apps", help="Kubernetes namespace")
-    gen_parser.add_argument("--registry", default="", help="Container registry URL")
+    gen_parser.add_argument("--namespace", default=None, help="Kubernetes namespace")
+    gen_parser.add_argument("--registry", default=None, help="Container registry URL")
     gen_parser.add_argument("--host", default=None, help="Ingress host")
     gen_parser.add_argument(
         "--ingress", "-i",
-        default="traefik",
+        default=None,
         choices=["traefik", "haproxy"],
         help="Ingress controller type: traefik (local/dev) or haproxy (GCP)"
+    )
+    gen_parser.add_argument(
+        "--from-apps-yaml",
+        action="store_true",
+        help="Read configuration from apps.yaml serverless entry"
+    )
+    gen_parser.add_argument(
+        "--apps-yaml",
+        default=None,
+        help="Path to apps.yaml (default: auto-detect)"
+    )
+    gen_parser.add_argument(
+        "--env", "-e",
+        default="local",
+        choices=["local", "dev", "gcp"],
+        help="Target environment for defaults (default: local)"
+    )
+
+    # Generate-all command
+    gen_all_parser = subparsers.add_parser(
+        "generate-all",
+        help="Generate manifests for all enabled serverless apps from apps.yaml"
+    )
+    gen_all_parser.add_argument("--output", "-o", required=True, help="Output directory")
+    gen_all_parser.add_argument(
+        "--env", "-e",
+        default="local",
+        choices=["local", "dev", "gcp"],
+        help="Target environment (default: local)"
+    )
+    gen_all_parser.add_argument(
+        "--apps-yaml",
+        default=None,
+        help="Path to apps.yaml (default: auto-detect)"
     )
 
     # List command
     list_parser = subparsers.add_parser("list", help="List discovered functions")
-    list_parser.add_argument("source_dir", help="Source directory containing functions")
+    list_parser.add_argument("source_dir", nargs="?", help="Source directory containing functions")
+    list_parser.add_argument(
+        "--from-apps-yaml",
+        action="store_true",
+        help="List serverless apps from apps.yaml"
+    )
+    list_parser.add_argument(
+        "--apps-yaml",
+        default=None,
+        help="Path to apps.yaml (default: auto-detect)"
+    )
+    list_parser.add_argument(
+        "--env", "-e",
+        default="local",
+        choices=["local", "dev", "gcp"],
+        help="Target environment (default: local)"
+    )
 
     # Run command
     run_parser = subparsers.add_parser("run", help="Run functions locally")
@@ -1057,26 +1242,149 @@ def main():
     args = parser.parse_args()
 
     if args.command == "generate":
-        generate_all_manifests(
-            source_dir=args.source_dir,
-            app_name=args.name,
-            output_dir=args.output,
-            namespace=args.namespace,
-            registry=args.registry,
-            host=args.host,
-            ingress_type=args.ingress,
-        )
+        if args.from_apps_yaml:
+            # Read configuration from apps.yaml
+            if not args.name:
+                print("Error: --name is required when using --from-apps-yaml")
+                sys.exit(1)
+
+            serverless_config = get_serverless_config(args.name, args.apps_yaml)
+            if not serverless_config:
+                print(f"Error: Serverless app '{args.name}' not found in apps.yaml")
+                sys.exit(1)
+
+            # Get defaults for the environment
+            defaults = get_defaults_for_env(args.apps_yaml, args.env)
+
+            # Get environment-specific override
+            env_override = serverless_config.get(args.env, {})
+
+            # Determine source_dir
+            source_dir = args.source_dir
+            if not source_dir:
+                source_dir = serverless_config.get("path")
+            if not source_dir:
+                print("Error: source_dir is required (or set 'path' in apps.yaml)")
+                sys.exit(1)
+
+            # Resolve settings with priority: CLI args > env override > serverless config > defaults
+            namespace = (
+                args.namespace
+                or serverless_config.get("namespace")
+                or defaults["namespace"]
+            )
+            registry = args.registry if args.registry is not None else defaults["registry"]
+            ingress = args.ingress or defaults["ingress"]
+
+            print(f"Generating manifests for '{args.name}' (env: {args.env})")
+            print(f"  Source: {source_dir}")
+            print(f"  Namespace: {namespace}")
+            print(f"  Registry: {registry or '(none)'}")
+            print(f"  Ingress: {ingress}")
+
+            generate_all_manifests(
+                source_dir=source_dir,
+                app_name=args.name,
+                output_dir=args.output,
+                namespace=namespace,
+                registry=registry,
+                host=args.host,
+                ingress_type=ingress,
+            )
+        else:
+            # Legacy mode: direct CLI args
+            if not args.source_dir:
+                print("Error: source_dir is required")
+                sys.exit(1)
+            if not args.name:
+                print("Error: --name is required")
+                sys.exit(1)
+
+            generate_all_manifests(
+                source_dir=args.source_dir,
+                app_name=args.name,
+                output_dir=args.output,
+                namespace=args.namespace or "apps",
+                registry=args.registry or "",
+                host=args.host,
+                ingress_type=args.ingress or "traefik",
+            )
+
+    elif args.command == "generate-all":
+        # Generate manifests for all enabled serverless apps
+        enabled_apps = get_enabled_serverless_apps(args.env, args.apps_yaml)
+
+        if not enabled_apps:
+            print(f"No enabled serverless apps found for environment '{args.env}'")
+            sys.exit(0)
+
+        # Get defaults for the environment
+        defaults = get_defaults_for_env(args.apps_yaml, args.env)
+
+        print(f"Generating manifests for {len(enabled_apps)} serverless apps (env: {args.env})")
+
+        for app_config in enabled_apps:
+            app_name = app_config["name"]
+            source_dir = app_config.get("path")
+
+            if not source_dir:
+                print(f"  Skipping {app_name}: no path defined")
+                continue
+
+            # Get app-specific overrides
+            namespace = app_config.get("namespace") or defaults["namespace"]
+            registry = defaults["registry"]
+            ingress = defaults["ingress"]
+
+            # Output to app-specific subdirectory
+            output_dir = os.path.join(args.output, app_name)
+
+            print(f"\n  {app_name}:")
+            print(f"    Source: {source_dir}")
+            print(f"    Output: {output_dir}")
+
+            try:
+                generate_all_manifests(
+                    source_dir=source_dir,
+                    app_name=app_name,
+                    output_dir=output_dir,
+                    namespace=namespace,
+                    registry=registry,
+                    host=None,
+                    ingress_type=ingress,
+                )
+            except Exception as e:
+                print(f"    Error: {e}")
+
+        print(f"\nGenerated manifests in {args.output}")
+
     elif args.command == "list":
-        functions = discover_functions(args.source_dir)
-        for func in functions:
-            trigger_info = ""
-            if func.http_trigger:
-                trigger_info = f" -> {func.http_trigger.path}"
-            elif func.queue_trigger:
-                trigger_info = f" -> queue:{func.queue_trigger.queue_name}"
-            elif func.schedule_trigger:
-                trigger_info = f" -> cron:{func.schedule_trigger.cron}"
-            print(f"{func.name} ({func.trigger_type.value}){trigger_info}")
+        if args.from_apps_yaml:
+            # List serverless apps from apps.yaml
+            enabled_apps = get_enabled_serverless_apps(args.env, args.apps_yaml)
+            if not enabled_apps:
+                print(f"No enabled serverless apps found for environment '{args.env}'")
+            else:
+                print(f"Enabled serverless apps for '{args.env}':")
+                for app in enabled_apps:
+                    path = app.get("path", "(no path)")
+                    print(f"  {app['name']}: {path}")
+        else:
+            # List functions from source directory
+            if not args.source_dir:
+                print("Error: source_dir is required (or use --from-apps-yaml)")
+                sys.exit(1)
+            functions = discover_functions(args.source_dir)
+            for func in functions:
+                trigger_info = ""
+                if func.http_trigger:
+                    trigger_info = f" -> {func.http_trigger.path}"
+                elif func.queue_trigger:
+                    trigger_info = f" -> queue:{func.queue_trigger.queue_name}"
+                elif func.schedule_trigger:
+                    trigger_info = f" -> cron:{func.schedule_trigger.cron}"
+                print(f"{func.name} ({func.trigger_type.value}){trigger_info}")
+
     elif args.command == "run":
         os.environ["PORT"] = str(args.port)
         if args.function:

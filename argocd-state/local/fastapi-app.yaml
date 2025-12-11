@@ -1,19 +1,17 @@
-# Auto-generated from apps.yaml - DO NOT EDIT MANUALLY
-# Regenerate with: ./scripts/generate-argocd-state.sh gcp
+# Auto-generated - DO NOT EDIT. Regenerate with: ./scripts/generate-argocd-state.sh local
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: apps
+  name: fastapi
   namespace: argocd
   labels:
     app.kubernetes.io/part-of: k3s-platform
-    environment: gcp
-    type: kustomize
+    environment: local
+    type: app
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: k3s-platform
-  # Ignore replicas field - KEDA/HPA manages scaling
   ignoreDifferences:
     - group: apps
       kind: Deployment
@@ -22,12 +20,10 @@ spec:
   source:
     repoURL: https://github.com/GeeekyBoy/k3s-platform.git
     targetRevision: HEAD
-    path: k8s/overlays/gcp
-    kustomize:
-      # Image substitutions generated from apps.yaml and configs/.env
-      # Base images are mapped to environment-specific registry
-      images:
-      - fastapi-app=us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/fastapi:latest
+    path: argocd-state/local/apps/fastapi
+    directory:
+      recurse: false
+      include: 'manifests.yaml'
   destination:
     server: https://kubernetes.default.svc
     namespace: apps

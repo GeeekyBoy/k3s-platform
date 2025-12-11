@@ -32,7 +32,7 @@ spec:
           value: hello_world
         - name: PORT
           value: '8080'
-        image: registry.localhost:5111/serverless-example:latest
+        image: serverless-example:latest
         livenessProbe:
           httpGet:
             path: /live
@@ -46,15 +46,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 100m
             memory: 256Mi
           requests:
             cpu: 100m
             memory: 256Mi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets: []
 ---
 apiVersion: v1
@@ -86,6 +92,8 @@ metadata:
 spec:
   hosts:
   - serverless-example-hello-world.apps
+  pathPrefixes:
+  - /api/hello
   replicas:
     max: 10
     min: 0
@@ -170,7 +178,7 @@ spec:
           value: process_data
         - name: PORT
           value: '8080'
-        image: registry.localhost:5111/serverless-example:latest
+        image: serverless-example:latest
         livenessProbe:
           httpGet:
             path: /live
@@ -184,15 +192,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 200m
             memory: 512Mi
           requests:
             cpu: 200m
             memory: 512Mi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets: []
 ---
 apiVersion: v1
@@ -224,6 +238,8 @@ metadata:
 spec:
   hosts:
   - serverless-example-process-data.apps
+  pathPrefixes:
+  - /api/process
   replicas:
     max: 20
     min: 0
@@ -296,7 +312,7 @@ spec:
           value: analyze_content
         - name: PORT
           value: '8080'
-        image: registry.localhost:5111/serverless-example:latest
+        image: serverless-example:latest
         livenessProbe:
           httpGet:
             path: /live
@@ -310,15 +326,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 500m
             memory: 1Gi
           requests:
             cpu: 500m
             memory: 1Gi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets: []
 ---
 apiVersion: v1
@@ -350,6 +372,8 @@ metadata:
 spec:
   hosts:
   - serverless-example-analyze-content.apps
+  pathPrefixes:
+  - /api/analyze
   replicas:
     max: 5
     min: 0
@@ -431,7 +455,7 @@ spec:
           value: random_animal
         - name: PORT
           value: '8080'
-        image: registry.localhost:5111/serverless-example:latest
+        image: serverless-example:latest
         livenessProbe:
           httpGet:
             path: /live
@@ -445,15 +469,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 50m
             memory: 128Mi
           requests:
             cpu: 50m
             memory: 128Mi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets: []
 ---
 apiVersion: v1
@@ -485,6 +515,8 @@ metadata:
 spec:
   hosts:
   - serverless-example-random-animal.apps
+  pathPrefixes:
+  - /api/animal
   replicas:
     max: 10
     min: 0
@@ -569,7 +601,7 @@ spec:
           value: health_check
         - name: PORT
           value: '8080'
-        image: registry.localhost:5111/serverless-example:latest
+        image: serverless-example:latest
         livenessProbe:
           httpGet:
             path: /live
@@ -583,15 +615,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 100m
             memory: 256Mi
           requests:
             cpu: 100m
             memory: 256Mi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets: []
 ---
 apiVersion: v1
@@ -623,6 +661,8 @@ metadata:
 spec:
   hosts:
   - serverless-example-health-check.apps
+  pathPrefixes:
+  - /api/health
   replicas:
     max: 50
     min: 1
@@ -707,7 +747,7 @@ spec:
           value: process_tasks
         - name: PORT
           value: '8080'
-        image: registry.localhost:5111/serverless-example:latest
+        image: serverless-example:latest
         livenessProbe:
           httpGet:
             path: /live
@@ -721,15 +761,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 200m
             memory: 512Mi
           requests:
             cpu: 200m
             memory: 512Mi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets: []
 ---
 apiVersion: v1
@@ -834,7 +880,7 @@ spec:
           value: send_emails
         - name: PORT
           value: '8080'
-        image: registry.localhost:5111/serverless-example:latest
+        image: serverless-example:latest
         livenessProbe:
           httpGet:
             path: /live
@@ -848,15 +894,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 250m
             memory: 1Gi
           requests:
             cpu: 250m
             memory: 1Gi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets: []
 ---
 apiVersion: v1
@@ -961,7 +1013,7 @@ spec:
           value: process_images
         - name: PORT
           value: '8080'
-        image: registry.localhost:5111/serverless-example:latest
+        image: serverless-example:latest
         livenessProbe:
           httpGet:
             path: /live
@@ -975,15 +1027,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: '1'
             memory: 2Gi
           requests:
             cpu: '1'
             memory: 2Gi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets: []
 ---
 apiVersion: v1
@@ -1077,11 +1135,10 @@ spec:
             env:
             - name: K3SFN_FUNCTION
               value: hourly_metrics
-            image: registry.localhost:5111/serverless-example:latest
+            image: serverless-example:latest
             name: function
             resources:
               limits:
-                cpu: 100m
                 memory: 256Mi
               requests:
                 cpu: 100m
@@ -1114,11 +1171,10 @@ spec:
             env:
             - name: K3SFN_FUNCTION
               value: daily_cleanup
-            image: registry.localhost:5111/serverless-example:latest
+            image: serverless-example:latest
             name: function
             resources:
               limits:
-                cpu: 200m
                 memory: 512Mi
               requests:
                 cpu: 200m
@@ -1151,11 +1207,10 @@ spec:
             env:
             - name: K3SFN_FUNCTION
               value: weekly_report
-            image: registry.localhost:5111/serverless-example:latest
+            image: serverless-example:latest
             name: function
             resources:
               limits:
-                cpu: 500m
                 memory: 1Gi
               requests:
                 cpu: 500m

@@ -1,9 +1,4 @@
-# Auto-generated from apps.yaml - DO NOT EDIT MANUALLY
-# Regenerate with: ./scripts/generate-argocd-state.sh local
-#
-# NOTE: You must build and push the image before ArgoCD can deploy this:
-#   docker build -t registry.localhost:5111/serverless-example:latest apps/serverless-example
-#   docker push registry.localhost:5111/serverless-example:latest
+# Auto-generated - DO NOT EDIT. Regenerate with: ./scripts/generate-argocd-state.sh local
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -17,7 +12,6 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: k3s-platform
-  # Ignore replicas field - KEDA manages scaling for serverless functions
   ignoreDifferences:
     - group: apps
       kind: Deployment
