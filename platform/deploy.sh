@@ -30,11 +30,13 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 GITHUB_REPO="https://github.com/GeeekyBoy/k3s-platform.git"
 
-# Load configuration
-if [[ -f "${PROJECT_ROOT}/configs/.env" ]]; then
+# Load configuration (prefer .env.gcp, fall back to .env)
+if [[ -f "${PROJECT_ROOT}/configs/.env.gcp" ]]; then
+    source "${PROJECT_ROOT}/configs/.env.gcp"
+elif [[ -f "${PROJECT_ROOT}/configs/.env" ]]; then
     source "${PROJECT_ROOT}/configs/.env"
 else
-    echo "[ERROR] Configuration file not found: configs/.env"
+    echo "[ERROR] Configuration file not found: configs/.env.gcp or configs/.env"
     exit 1
 fi
 

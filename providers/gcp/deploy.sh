@@ -24,19 +24,21 @@ log_step() { echo -e "\n${CYAN}═══ $1 ═══${NC}\n"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# Load configuration
-if [[ -f "${PROJECT_ROOT}/configs/.env" ]]; then
+# Load configuration (prefer .env.gcp, fall back to .env)
+if [[ -f "${PROJECT_ROOT}/configs/.env.gcp" ]]; then
+    source "${PROJECT_ROOT}/configs/.env.gcp"
+elif [[ -f "${PROJECT_ROOT}/configs/.env" ]]; then
     source "${PROJECT_ROOT}/configs/.env"
 else
-    echo -e "${RED}[ERROR]${NC} Configuration file not found: configs/.env"
+    echo -e "${RED}[ERROR]${NC} Configuration file not found: configs/.env.gcp or configs/.env"
     exit 1
 fi
 
 # Validate required variables
-: "${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set in configs/.env}"
-: "${GCP_REGION:?GCP_REGION must be set in configs/.env}"
-: "${CLUSTER_NAME:?CLUSTER_NAME must be set in configs/.env}"
-: "${REGISTRY_NAME:?REGISTRY_NAME must be set in configs/.env}"
+: "${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}"
+: "${GCP_REGION:?GCP_REGION must be set}"
+: "${CLUSTER_NAME:?CLUSTER_NAME must be set}"
+: "${REGISTRY_NAME:?REGISTRY_NAME must be set}"
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════════════════╗"
