@@ -3,8 +3,16 @@ kind: Kustomization
 
 resources:
   - ../../base
-  - scaledobject.yaml
-  - ingress-gcp.yaml
+  # HAProxy Ingress with KEDA HTTP Add-on (single LB, path routing, zero request drops)
+  - ingress-haproxy.yaml
+  # Legacy: scaledobject.yaml for queue-based scaling (if needed alongside HTTP scaling)
+  # - scaledobject.yaml
+
+# Image transformer for GCP Artifact Registry
+images:
+  - name: fastapi-app
+    newName: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/fastapi
+    newTag: latest
 
 transformers:
   - |-

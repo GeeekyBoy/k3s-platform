@@ -100,6 +100,29 @@ kubectl rollout status daemonset/cloud-controller-manager \
 log_success "GCP CCM deployed"
 
 #═══════════════════════════════════════════════════════════════════════════════
+# Deploy GCP Persistent Disk CSI Driver
+#═══════════════════════════════════════════════════════════════════════════════
+log_step "Deploying GCP Persistent Disk CSI Driver"
+
+log_info "Creating GCP PD CSI namespace..."
+kubectl create namespace gce-pd-csi-driver --dry-run=client -o yaml | kubectl apply -f -
+
+log_info "Applying GCP PD CSI driver manifests..."
+kubectl apply -k "${SCRIPT_DIR}/gcp-pd-csi/"
+
+log_info "Waiting for CSI node DaemonSet to be ready..."
+kubectl rollout status daemonset/csi-gce-pd-node \
+    -n gce-pd-csi-driver \
+    --timeout=180s
+
+log_info "Waiting for CSI controller to be ready..."
+kubectl rollout status deployment/csi-gce-pd-controller \
+    -n gce-pd-csi-driver \
+    --timeout=180s
+
+log_success "GCP PD CSI Driver deployed (persistent volumes survive node replacement)"
+
+#═══════════════════════════════════════════════════════════════════════════════
 # Deploy System Upgrade Controller
 #═══════════════════════════════════════════════════════════════════════════════
 log_step "Deploying System Upgrade Controller"
@@ -170,7 +193,35 @@ helm upgrade --install http-add-on kedacore/keda-add-ons-http \
 log_success "KEDA HTTP Add-on deployed (HTTP scale-to-zero enabled, 120s cold start timeout)"
 
 #═══════════════════════════════════════════════════════════════════════════════
-# Deploy Cluster Autoscaler (VM scale-to-zero)
+# Deploy HAProxy Ingress Controller (Single LB with path-based routing)
+#═══════════════════════════════════════════════════════════════════════════════
+log_step "Deploying HAProxy Ingress Controller"
+
+log_info "Adding HAProxy Helm repository..."
+helm repo add haproxy-ingress https://haproxy-ingress.github.io/charts 2>/dev/null || true
+helm repo update haproxy-ingress
+
+log_info "Installing HAProxy Ingress..."
+kubectl apply -k "${SCRIPT_DIR}/haproxy-ingress/"
+
+helm upgrade --install haproxy-ingress haproxy-ingress/haproxy-ingress \
+    --namespace haproxy-ingress \
+    --values "${SCRIPT_DIR}/haproxy-ingress/values.yaml" \
+    --wait \
+    --timeout=300s
+
+log_info "Waiting for HAProxy Ingress to be ready..."
+kubectl rollout status deployment/haproxy-ingress-controller \
+    -n haproxy-ingress \
+    --timeout=180s 2>/dev/null || \
+kubectl rollout status deployment/haproxy-ingress \
+    -n haproxy-ingress \
+    --timeout=180s 2>/dev/null || true
+
+log_success "HAProxy Ingress Controller deployed (single GCP Load Balancer)"
+
+#═══════════════════════════════════════════════════════════════════════════════
+# Deploy Cluster Autoscaler (VM scaling with min=1)
 #═══════════════════════════════════════════════════════════════════════════════
 log_step "Deploying Cluster Autoscaler"
 
@@ -279,12 +330,18 @@ echo "════════════════════════�
 echo ""
 echo "Components installed:"
 echo "  ✓ GCP Cloud Controller Manager (LoadBalancers)"
+echo "  ✓ GCP PD CSI Driver (persistent volumes)"
 echo "  ✓ System Upgrade Controller (zero-downtime upgrades)"
 echo "  ✓ KEDA Autoscaler (pod scale-to-zero)"
-echo "  ✓ KEDA HTTP Add-on (HTTP scale-to-zero for serverless)"
-echo "  ✓ Cluster Autoscaler (VM scale-to-zero)"
-echo "  ✓ K3s Upgrade Plans"
+echo "  ✓ KEDA HTTP Add-on (cold-start request buffering)"
+echo "  ✓ HAProxy Ingress Controller (single LB, path-based routing)"
+echo "  ✓ Cluster Autoscaler (VM scaling, min=${MIN_WORKERS:-1})"
 echo "  ✓ ArgoCD (GitOps incremental deployments)"
+echo ""
+echo "Load Balancer:"
+INGRESS_IP=$(kubectl get svc -n haproxy-ingress haproxy-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "pending")
+echo "  External IP: ${INGRESS_IP}"
+echo "  All apps accessible via path-based routing on this single IP"
 echo ""
 
 echo "ArgoCD (GitOps):"

@@ -1,0 +1,16 @@
+# Strategic merge patch for CSI node DaemonSet
+# Use simpler args without experimental flags
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: csi-gce-pd-node
+  namespace: gce-pd-csi-driver
+spec:
+  template:
+    spec:
+      containers:
+        - name: gce-pd-driver
+          args:
+            - -v=5
+            - -endpoint=unix:/csi/csi.sock
+            - -run-controller-service=false

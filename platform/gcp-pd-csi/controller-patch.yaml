@@ -1,0 +1,25 @@
+# Strategic merge patch for CSI controller deployment
+# Run on control-plane so it's available even when workers are scaled to zero
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csi-gce-pd-controller
+  namespace: gce-pd-csi-driver
+spec:
+  template:
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: gce-pd-driver
+          args:
+            - -v=5
+            - -endpoint=unix:/csi/csi.sock
+            - -run-node-service=false

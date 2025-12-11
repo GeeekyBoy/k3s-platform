@@ -176,17 +176,30 @@ def generate_deployment(
                                     "cpu": func.resources.cpu,
                                 },
                                 "limits": {
+                                    # Memory limit prevents OOM kills
                                     "memory": func.resources.memory_limit,
-                                    "cpu": func.resources.cpu_limit,
+                                    # CPU limit intentionally omitted for burstable QoS
+                                    # This allows CPU burst during cold start, reducing latency
                                 },
+                            },
+                            # Startup probe: Allow up to 60s for cold start (30 attempts * 2s)
+                            # This prevents liveness probe from killing pod during slow startup
+                            "startupProbe": {
+                                "httpGet": {
+                                    "path": "/ready",
+                                    "port": 8080,
+                                },
+                                "initialDelaySeconds": 1,
+                                "periodSeconds": 2,
+                                "failureThreshold": 30,
                             },
                             "readinessProbe": {
                                 "httpGet": {
                                     "path": "/ready",
                                     "port": 8080,
                                 },
-                                "initialDelaySeconds": 2,
-                                "periodSeconds": 5,
+                                "initialDelaySeconds": 1,
+                                "periodSeconds": 2,
                             },
                             "livenessProbe": {
                                 "httpGet": {
@@ -270,13 +283,15 @@ def generate_httpscaledobject(
     """Generate KEDA HTTPScaledObject for HTTP-triggered functions"""
     name = f"{app_name}-{func.name}".replace("_", "-").lower()
 
-    # Generate internal host for KEDA routing - always use service DNS name pattern
-    # The external ingress host is not used here - KEDA routes by internal Host header
-    # which is rewritten by Traefik middleware before forwarding to KEDA interceptor
+    # Use host-based routing: HAProxy rewrites Host header to {service}.{namespace}
+    # This is required because KEDA HTTP Add-on doesn't support wildcard "*" host matching
+    # The path comes from the http_trigger configuration
+    path_prefix = func.http_trigger.path if func.http_trigger else f"/{name}"
     routing_host = f"{name}.{namespace}"
 
     spec = {
-        "hosts": [routing_host],
+        "hosts": [routing_host],  # Match specific host (set by HAProxy host rewrite)
+        "pathPrefixes": [path_prefix],  # Route by path prefix
         "scaleTargetRef": {
             "name": name,
             "kind": "Deployment",
@@ -419,8 +434,9 @@ def generate_cronjob(
                                             "cpu": func.resources.cpu,
                                         },
                                         "limits": {
+                                            # Memory limit prevents OOM kills
                                             "memory": func.resources.memory_limit,
-                                            "cpu": func.resources.cpu_limit,
+                                            # CPU limit intentionally omitted for burstable QoS
                                         },
                                     },
                                 }
@@ -631,6 +647,160 @@ def generate_keda_interceptor_externalname(
     }
 
 
+def generate_haproxy_route_service(
+    func: FunctionMetadata,
+    app_name: str,
+    namespace: str = "apps",
+) -> Dict:
+    """
+    Generate a per-route ExternalName service that points to KEDA interceptor.
+
+    HAProxy Ingress merges backends that point to the same service, which
+    breaks per-path config-backend annotations. By creating a unique service
+    per function, each gets its own backend with its own Host header rewrite.
+
+    Uses ExternalName for DNS-based resolution (no hardcoded IPs).
+    """
+    name = f"{app_name}-{func.name}".replace("_", "-").lower()
+    service_name = f"keda-route-{name}"
+
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": service_name,
+            "namespace": namespace,
+            "labels": {
+                "app": name,
+                "k3sfn.io/app": app_name,
+                "k3sfn.io/function": func.name,
+                "k3sfn.io/component": "keda-route",
+            },
+        },
+        "spec": {
+            "type": "ExternalName",
+            "externalName": "keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local",
+            "ports": [
+                {
+                    "port": 8080,
+                    "targetPort": 8080,
+                    "protocol": "TCP",
+                }
+            ],
+        },
+    }
+
+
+def generate_haproxy_ingress(
+    func: FunctionMetadata,
+    app_name: str,
+    namespace: str = "apps",
+) -> Dict:
+    """
+    Generate HAProxy Ingress resource for a function.
+
+    Uses per-path Ingress with config-backend annotation to rewrite
+    the Host header for KEDA HTTP Add-on routing.
+
+    Each function gets its own unique route service to prevent HAProxy
+    from merging backends (which would break per-path Host header rewriting).
+    """
+    name = f"{app_name}-{func.name}".replace("_", "-").lower()
+    service_name = f"keda-route-{name}"
+
+    if not func.http_trigger:
+        raise ValueError(f"Function {func.name} is not an HTTP trigger")
+
+    path = func.http_trigger.path
+    routing_host = f"{name}.{namespace}"
+
+    return {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "Ingress",
+        "metadata": {
+            "name": f"{name}-haproxy",
+            "namespace": namespace,
+            "labels": {
+                "app": name,
+                "k3sfn.io/app": app_name,
+                "k3sfn.io/function": func.name,
+                "k3sfn.io/ingress": "haproxy",
+            },
+            "annotations": {
+                "haproxy-ingress.github.io/timeout-connect": "10s",
+                "haproxy-ingress.github.io/timeout-server": "180s",
+                "haproxy-ingress.github.io/timeout-client": "180s",
+                "haproxy-ingress.github.io/timeout-queue": "180s",
+                "haproxy-ingress.github.io/retry-on": "conn-failure,empty-response,response-timeout",
+                "haproxy-ingress.github.io/retries": "3",
+                # Rewrite Host header for KEDA routing
+                "haproxy-ingress.github.io/config-backend": f"http-request set-header Host {routing_host}\n",
+            },
+        },
+        "spec": {
+            "ingressClassName": "haproxy",
+            "rules": [
+                {
+                    "http": {
+                        "paths": [
+                            {
+                                "path": path,
+                                "pathType": "Prefix",
+                                "backend": {
+                                    "service": {
+                                        # Use per-function service to prevent HAProxy backend merging
+                                        "name": service_name,
+                                        "port": {"number": 8080},
+                                    },
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+        },
+    }
+
+
+def generate_haproxy_keda_proxy_service(namespace: str = "apps") -> List[Dict]:
+    """
+    Generate Service and Endpoints to proxy to KEDA interceptor.
+
+    Uses headless service with EndpointSlice to dynamically track the
+    KEDA interceptor IP without hardcoding. This is achieved via a
+    ClusterIP service that uses a selector-less design with an
+    ExternalName type for DNS-based resolution.
+
+    HAProxy doesn't support ExternalName services directly in Ingress,
+    so we use a regular ClusterIP service with dynamic endpoint discovery.
+    """
+    # ExternalName service for DNS-based resolution (used by other components)
+    external_svc = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": "keda-interceptor-proxy",
+            "namespace": namespace,
+            "labels": {
+                "k3sfn.io/component": "keda-proxy",
+            },
+        },
+        "spec": {
+            "type": "ExternalName",
+            "externalName": "keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local",
+            "ports": [
+                {
+                    "port": 8080,
+                    "targetPort": 8080,
+                    "protocol": "TCP",
+                }
+            ],
+        },
+    }
+
+    return [external_svc]
+
+
 def generate_ingress_routes(
     functions: List[FunctionMetadata],
     app_name: str,
@@ -715,8 +885,20 @@ def generate_all_manifests(
     registry: str = "",
     host: Optional[str] = None,
     app_path: Optional[str] = None,
+    ingress_type: str = "traefik",
 ) -> None:
-    """Generate all Kubernetes manifests for an app"""
+    """Generate all Kubernetes manifests for an app
+
+    Args:
+        source_dir: Path to source directory containing functions
+        app_name: Application name
+        output_dir: Output directory for generated manifests
+        namespace: Kubernetes namespace
+        registry: Container registry URL
+        host: Ingress host
+        app_path: Path to app directory (relative to project root)
+        ingress_type: Ingress controller type - "traefik" (local) or "haproxy" (GCP)
+    """
     # Discover functions
     functions = discover_functions(source_dir)
 
@@ -773,16 +955,37 @@ def generate_all_manifests(
             netpol = generate_network_policy(func, app_name, namespace)
             all_manifests.append(netpol)
 
-    # Generate IngressRoute for public functions only
-    ingress, middlewares, external_svc = generate_ingress_routes(functions, app_name, namespace, host)
-    if middlewares:
-        all_manifests.extend(middlewares)
-    if ingress:
-        all_manifests.append(ingress)
-        print(f"  Generated IngressRoute for public functions")
-    if external_svc:
-        all_manifests.append(external_svc)
-        print(f"  Generated ExternalName service for KEDA cross-namespace access")
+    # Generate ingress resources based on ingress type
+    if ingress_type == "haproxy":
+        # HAProxy ingress for GCP deployment
+        # Generate per-function route services and ingresses
+        # Each function gets its own ExternalName service pointing to KEDA interceptor
+        # This prevents HAProxy from merging backends (which breaks per-path Host rewriting)
+        haproxy_route_count = 0
+        for func in functions:
+            if func.trigger_type == TriggerType.HTTP and func.visibility == Visibility.PUBLIC:
+                # Generate per-route ExternalName service
+                route_svc = generate_haproxy_route_service(func, app_name, namespace)
+                all_manifests.append(route_svc)
+                # Generate HAProxy Ingress
+                haproxy_ing = generate_haproxy_ingress(func, app_name, namespace)
+                all_manifests.append(haproxy_ing)
+                haproxy_route_count += 1
+
+        if haproxy_route_count > 0:
+            print(f"  Generated {haproxy_route_count} HAProxy route services (ExternalName, DNS-based)")
+            print(f"  Generated {haproxy_route_count} HAProxy Ingress resources")
+    else:
+        # Traefik IngressRoute for local development
+        ingress, middlewares, external_svc = generate_ingress_routes(functions, app_name, namespace, host)
+        if middlewares:
+            all_manifests.extend(middlewares)
+        if ingress:
+            all_manifests.append(ingress)
+            print(f"  Generated IngressRoute for public functions")
+        if external_svc:
+            all_manifests.append(external_svc)
+            print(f"  Generated ExternalName service for KEDA cross-namespace access")
 
     # Write all manifests to a single file
     manifest_content = yaml.dump_all(all_manifests, default_flow_style=False)
@@ -834,6 +1037,12 @@ def main():
     gen_parser.add_argument("--namespace", default="apps", help="Kubernetes namespace")
     gen_parser.add_argument("--registry", default="", help="Container registry URL")
     gen_parser.add_argument("--host", default=None, help="Ingress host")
+    gen_parser.add_argument(
+        "--ingress", "-i",
+        default="traefik",
+        choices=["traefik", "haproxy"],
+        help="Ingress controller type: traefik (local/dev) or haproxy (GCP)"
+    )
 
     # List command
     list_parser = subparsers.add_parser("list", help="List discovered functions")
@@ -855,6 +1064,7 @@ def main():
             namespace=args.namespace,
             registry=args.registry,
             host=args.host,
+            ingress_type=args.ingress,
         )
     elif args.command == "list":
         functions = discover_functions(args.source_dir)

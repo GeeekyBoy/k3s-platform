@@ -1,0 +1,93 @@
+# HAProxy Ingress Controller Helm Values
+# Optimized for scale-to-zero with KEDA HTTP Add-on
+# Docs: https://haproxy-ingress.github.io/docs/configuration/
+
+controller:
+  # Allow scheduling on any node, prefer workers over control-plane
+  # No nodeSelector - use affinity to prefer workers
+
+  # Tolerations to allow scheduling on control-plane (fallback during scale-up)
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+
+  # Prefer non-control-plane nodes (workers)
+  # Workers don't have node-role.kubernetes.io/control-plane label
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+              - key: node-role.kubernetes.io/control-plane
+                operator: DoesNotExist
+
+  # High availability with 2 replicas
+  replicaCount: 2
+
+  # Resource limits for cost efficiency
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Use LoadBalancer service (creates single GCP Network LB)
+  service:
+    type: LoadBalancer
+    # No GCP-specific annotations needed - CCM handles provisioning automatically
+    # externalTrafficPolicy: Local preserves client IP and routes to local pods
+    externalTrafficPolicy: Local
+
+  # Ingress class name
+  ingressClass: haproxy
+  ingressClassResource:
+    name: haproxy
+    enabled: true
+    default: true  # Make HAProxy the default ingress class
+
+  # HAProxy configuration for reliability
+  config:
+    # Retry configuration for cold-start resilience
+    # Retries on connection failure (pod scaling up)
+    retries: "3"
+    retry-on: "conn-failure,empty-response,response-timeout"
+
+    # Timeouts aligned with KEDA HTTP Add-on (120s cold start)
+    timeout-connect: "10s"
+    timeout-client: "180s"   # Client can wait for cold start
+    timeout-server: "180s"   # Backend can take time to respond
+    timeout-queue: "180s"    # Queue requests during scale-up
+    timeout-http-request: "30s"
+    timeout-http-keep-alive: "60s"
+
+    # Backend health checks
+    backend-check-interval: "5s"
+
+    # Logging
+    syslog-endpoint: "stdout"
+    syslog-format: "raw"
+
+  # Metrics for monitoring
+  metrics:
+    enabled: true
+    service:
+      type: ClusterIP
+
+# Default backend (returns 503 when no backends available)
+defaultBackend:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 50m
+      memory: 32Mi

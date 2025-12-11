@@ -1,0 +1,18 @@
+# GCP Persistent Disk CSI Driver
+# Enables GCP PD volumes that survive node replacement
+# Source: https://github.com/kubernetes-sigs/gcp-compute-persistent-disk-csi-driver
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # Use 'noauth' overlay - designed for non-GKE clusters
+  # Uses instance metadata instead of service account credentials
+  - https://github.com/kubernetes-sigs/gcp-compute-persistent-disk-csi-driver//deploy/kubernetes/overlays/noauth?ref=v1.17.2
+  # Custom StorageClass for GCP PD
+  - storage-class.yaml
+
+# Add control-plane tolerations to controller (needs to run when workers are scaled to zero)
+# Also patch to remove experimental flags not supported by the driver
+patches:
+  - path: controller-patch.yaml
+  - path: node-patch.yaml

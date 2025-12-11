@@ -1,0 +1,48 @@
+# GCP Persistent Disk StorageClass
+# Uses GCP PD CSI driver - disks survive node replacement and can attach to any node in the zone
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gcp-pd-standard
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-standard  # Standard persistent disk (HDD)
+  csi.storage.k8s.io/fstype: ext4
+volumeBindingMode: WaitForFirstConsumer  # Create disk in same zone as pod
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gcp-pd-ssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-ssd  # SSD persistent disk (faster)
+  csi.storage.k8s.io/fstype: ext4
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+
+---
+# Update standard-rwo to use GCP PD instead of local-path
+# This replaces the existing StorageClass
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard-rwo
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-balanced  # Balanced between cost and performance
+  csi.storage.k8s.io/fstype: ext4
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: true

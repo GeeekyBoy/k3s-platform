@@ -1,0 +1,13 @@
+# HAProxy Ingress Controller
+# Single GCP Load Balancer with path-based routing
+# Integrated with KEDA HTTP Add-on for zero request drops during cold starts
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: haproxy-ingress
+
+resources:
+  - namespace.yaml
+
+# HAProxy Ingress is installed via Helm in deploy.sh
+# This kustomization handles additional resources
