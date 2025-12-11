@@ -20,15 +20,28 @@ from valkey.asyncio.sentinel import Sentinel
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Helper function to parse port from env (handles Kubernetes service discovery format)
+def parse_port(env_var: str, default: int) -> int:
+    """Parse port from environment variable.
+
+    Handles Kubernetes service discovery format like 'tcp://10.43.27.255:6379'
+    as well as plain port numbers.
+    """
+    value = os.getenv(env_var, str(default))
+    if value.startswith("tcp://"):
+        # Kubernetes service discovery format: tcp://ip:port
+        return int(value.split(":")[-1])
+    return int(value)
+
 # Environment configuration
 VALKEY_SENTINEL_ENABLED = os.getenv("VALKEY_SENTINEL_ENABLED", "true").lower() == "true"
 VALKEY_SENTINEL_HOST = os.getenv("VALKEY_SENTINEL_HOST", "valkey")
-VALKEY_SENTINEL_PORT = int(os.getenv("VALKEY_SENTINEL_PORT", "26379"))
+VALKEY_SENTINEL_PORT = parse_port("VALKEY_SENTINEL_PORT", 26379)
 VALKEY_SENTINEL_MASTER = os.getenv("VALKEY_SENTINEL_MASTER", "myprimary")
 VALKEY_HOST = os.getenv("VALKEY_HOST", "valkey")
-VALKEY_PORT = int(os.getenv("VALKEY_PORT", "6379"))
+VALKEY_PORT = parse_port("VALKEY_PORT", 6379)
 VALKEY_PASSWORD = os.getenv("VALKEY_PASSWORD", "")
-VALKEY_DB = int(os.getenv("VALKEY_DB", "0"))
+VALKEY_DB = parse_port("VALKEY_DB", 0)
 
 # Global connection pool
 valkey_pool: Optional[valkey.ConnectionPool] = None

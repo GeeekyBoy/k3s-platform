@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: fastapi
-        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/fastapi:6da5c9b70160
+        image: us-central1-docker.pkg.dev/bloompath-canary/k3s-platform/fastapi:bd1ed07145e7
         ports:
         - containerPort: 8000
           protocol: TCP
