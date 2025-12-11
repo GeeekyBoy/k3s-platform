@@ -46,15 +46,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 100m
             memory: 256Mi
           requests:
             cpu: 100m
             memory: 256Mi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets:
       - name: artifact-registry
 ---
@@ -87,6 +93,8 @@ metadata:
 spec:
   hosts:
   - serverless-example-hello-world.apps
+  pathPrefixes:
+  - /api/hello
   replicas:
     max: 10
     min: 0
@@ -185,15 +193,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 200m
             memory: 512Mi
           requests:
             cpu: 200m
             memory: 512Mi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets:
       - name: artifact-registry
 ---
@@ -226,6 +240,8 @@ metadata:
 spec:
   hosts:
   - serverless-example-process-data.apps
+  pathPrefixes:
+  - /api/process
   replicas:
     max: 20
     min: 0
@@ -312,15 +328,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 500m
             memory: 1Gi
           requests:
             cpu: 500m
             memory: 1Gi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets:
       - name: artifact-registry
 ---
@@ -353,6 +375,8 @@ metadata:
 spec:
   hosts:
   - serverless-example-analyze-content.apps
+  pathPrefixes:
+  - /api/analyze
   replicas:
     max: 5
     min: 0
@@ -448,15 +472,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 50m
             memory: 128Mi
           requests:
             cpu: 50m
             memory: 128Mi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets:
       - name: artifact-registry
 ---
@@ -489,6 +519,8 @@ metadata:
 spec:
   hosts:
   - serverless-example-random-animal.apps
+  pathPrefixes:
+  - /api/animal
   replicas:
     max: 10
     min: 0
@@ -587,15 +619,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 100m
             memory: 256Mi
           requests:
             cpu: 100m
             memory: 256Mi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets:
       - name: artifact-registry
 ---
@@ -628,6 +666,8 @@ metadata:
 spec:
   hosts:
   - serverless-example-health-check.apps
+  pathPrefixes:
+  - /api/health
   replicas:
     max: 50
     min: 1
@@ -726,15 +766,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 200m
             memory: 512Mi
           requests:
             cpu: 200m
             memory: 512Mi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets:
       - name: artifact-registry
 ---
@@ -854,15 +900,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: 250m
             memory: 1Gi
           requests:
             cpu: 250m
             memory: 1Gi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets:
       - name: artifact-registry
 ---
@@ -982,15 +1034,21 @@ spec:
           httpGet:
             path: /ready
             port: 8080
-          initialDelaySeconds: 2
-          periodSeconds: 5
+          initialDelaySeconds: 1
+          periodSeconds: 2
         resources:
           limits:
-            cpu: '1'
             memory: 2Gi
           requests:
             cpu: '1'
             memory: 2Gi
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
       imagePullSecrets:
       - name: artifact-registry
 ---
@@ -1089,7 +1147,6 @@ spec:
             name: function
             resources:
               limits:
-                cpu: 100m
                 memory: 256Mi
               requests:
                 cpu: 100m
@@ -1127,7 +1184,6 @@ spec:
             name: function
             resources:
               limits:
-                cpu: 200m
                 memory: 512Mi
               requests:
                 cpu: 200m
@@ -1165,7 +1221,6 @@ spec:
             name: function
             resources:
               limits:
-                cpu: 500m
                 memory: 1Gi
               requests:
                 cpu: 500m
@@ -1176,91 +1231,15 @@ spec:
   schedule: 0 6 * * 1
   timeZone: America/New_York
 ---
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  labels:
-    app: serverless-example-hello-world
-    k3sfn.io/app: serverless-example
-    k3sfn.io/function: hello_world
-  name: serverless-example-hello-world-host-rewrite
-  namespace: apps
-spec:
-  headers:
-    customRequestHeaders:
-      Host: serverless-example-hello-world.apps
----
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  labels:
-    app: serverless-example-random-animal
-    k3sfn.io/app: serverless-example
-    k3sfn.io/function: random_animal
-  name: serverless-example-random-animal-host-rewrite
-  namespace: apps
-spec:
-  headers:
-    customRequestHeaders:
-      Host: serverless-example-random-animal.apps
----
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  labels:
-    app: serverless-example-health-check
-    k3sfn.io/app: serverless-example
-    k3sfn.io/function: health_check
-  name: serverless-example-health-check-host-rewrite
-  namespace: apps
-spec:
-  headers:
-    customRequestHeaders:
-      Host: serverless-example-health-check.apps
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  labels:
-    k3sfn.io/app: serverless-example
-  name: serverless-example-routes
-  namespace: apps
-spec:
-  entryPoints:
-  - web
-  - websecure
-  routes:
-  - kind: Rule
-    match: PathPrefix(`/api/hello`)
-    middlewares:
-    - name: serverless-example-hello-world-host-rewrite
-      namespace: apps
-    services:
-    - name: keda-interceptor-proxy
-      port: 8080
-  - kind: Rule
-    match: PathPrefix(`/api/animal`)
-    middlewares:
-    - name: serverless-example-random-animal-host-rewrite
-      namespace: apps
-    services:
-    - name: keda-interceptor-proxy
-      port: 8080
-  - kind: Rule
-    match: PathPrefix(`/api/health`)
-    middlewares:
-    - name: serverless-example-health-check-host-rewrite
-      namespace: apps
-    services:
-    - name: keda-interceptor-proxy
-      port: 8080
----
 apiVersion: v1
 kind: Service
 metadata:
   labels:
-    k3sfn.io/component: keda-proxy
-  name: keda-interceptor-proxy
+    app: serverless-example-hello-world
+    k3sfn.io/app: serverless-example
+    k3sfn.io/component: keda-route
+    k3sfn.io/function: hello_world
+  name: keda-route-serverless-example-hello-world
   namespace: apps
 spec:
   externalName: keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local
@@ -1269,3 +1248,138 @@ spec:
     protocol: TCP
     targetPort: 8080
   type: ExternalName
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    haproxy-ingress.github.io/config-backend: 'http-request set-header Host serverless-example-hello-world.apps
+
+      '
+    haproxy-ingress.github.io/retries: '3'
+    haproxy-ingress.github.io/retry-on: conn-failure,empty-response,response-timeout
+    haproxy-ingress.github.io/timeout-client: 180s
+    haproxy-ingress.github.io/timeout-connect: 10s
+    haproxy-ingress.github.io/timeout-queue: 180s
+    haproxy-ingress.github.io/timeout-server: 180s
+  labels:
+    app: serverless-example-hello-world
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: hello_world
+    k3sfn.io/ingress: haproxy
+  name: serverless-example-hello-world-haproxy
+  namespace: apps
+spec:
+  ingressClassName: haproxy
+  rules:
+  - http:
+      paths:
+      - backend:
+          service:
+            name: keda-route-serverless-example-hello-world
+            port:
+              number: 8080
+        path: /api/hello
+        pathType: Prefix
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: serverless-example-random-animal
+    k3sfn.io/app: serverless-example
+    k3sfn.io/component: keda-route
+    k3sfn.io/function: random_animal
+  name: keda-route-serverless-example-random-animal
+  namespace: apps
+spec:
+  externalName: keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local
+  ports:
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+  type: ExternalName
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    haproxy-ingress.github.io/config-backend: 'http-request set-header Host serverless-example-random-animal.apps
+
+      '
+    haproxy-ingress.github.io/retries: '3'
+    haproxy-ingress.github.io/retry-on: conn-failure,empty-response,response-timeout
+    haproxy-ingress.github.io/timeout-client: 180s
+    haproxy-ingress.github.io/timeout-connect: 10s
+    haproxy-ingress.github.io/timeout-queue: 180s
+    haproxy-ingress.github.io/timeout-server: 180s
+  labels:
+    app: serverless-example-random-animal
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: random_animal
+    k3sfn.io/ingress: haproxy
+  name: serverless-example-random-animal-haproxy
+  namespace: apps
+spec:
+  ingressClassName: haproxy
+  rules:
+  - http:
+      paths:
+      - backend:
+          service:
+            name: keda-route-serverless-example-random-animal
+            port:
+              number: 8080
+        path: /api/animal
+        pathType: Prefix
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: serverless-example-health-check
+    k3sfn.io/app: serverless-example
+    k3sfn.io/component: keda-route
+    k3sfn.io/function: health_check
+  name: keda-route-serverless-example-health-check
+  namespace: apps
+spec:
+  externalName: keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local
+  ports:
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+  type: ExternalName
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    haproxy-ingress.github.io/config-backend: 'http-request set-header Host serverless-example-health-check.apps
+
+      '
+    haproxy-ingress.github.io/retries: '3'
+    haproxy-ingress.github.io/retry-on: conn-failure,empty-response,response-timeout
+    haproxy-ingress.github.io/timeout-client: 180s
+    haproxy-ingress.github.io/timeout-connect: 10s
+    haproxy-ingress.github.io/timeout-queue: 180s
+    haproxy-ingress.github.io/timeout-server: 180s
+  labels:
+    app: serverless-example-health-check
+    k3sfn.io/app: serverless-example
+    k3sfn.io/function: health_check
+    k3sfn.io/ingress: haproxy
+  name: serverless-example-health-check-haproxy
+  namespace: apps
+spec:
+  ingressClassName: haproxy
+  rules:
+  - http:
+      paths:
+      - backend:
+          service:
+            name: keda-route-serverless-example-health-check
+            port:
+              number: 8080
+        path: /api/health
+        pathType: Prefix
