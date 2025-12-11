@@ -12,6 +12,7 @@ patches:
   - path: argocd-cm.yaml
   - path: argocd-cmd-params.yaml
   - path: argocd-rbac.yaml
+  - path: tolerations-patch.yaml
   # JSON patches below
   # Make ArgoCD accessible via NodePort for local/k3d environments
   - patch: |-
