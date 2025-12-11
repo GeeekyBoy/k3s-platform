@@ -253,15 +253,6 @@ kubectl get applications -n argocd 2>/dev/null || true
 log_success "ArgoCD applications deployed"
 
 #═══════════════════════════════════════════════════════════════════════════════
-# Apply Upgrade Plans
-#═══════════════════════════════════════════════════════════════════════════════
-log_step "Applying K3s Upgrade Plans"
-
-kubectl apply -f "${PROJECT_ROOT}/configs/upgrade-plans.yaml"
-
-log_success "Upgrade plans applied"
-
-#═══════════════════════════════════════════════════════════════════════════════
 # Wait for nodes to be initialized by CCM
 #═══════════════════════════════════════════════════════════════════════════════
 log_step "Waiting for nodes to be initialized"
@@ -269,9 +260,14 @@ log_step "Waiting for nodes to be initialized"
 log_info "Waiting for CCM to label nodes..."
 sleep 30
 
-kubectl get nodes -o wide
-
-log_success "Nodes initialized by CCM"
+for i in {1..5}; do
+    if kubectl get nodes -o wide 2>/dev/null; then
+        log_success "Nodes initialized by CCM"
+        break
+    fi
+    log_info "Waiting for API server... (attempt ${i}/5)"
+    sleep 10
+done
 
 #═══════════════════════════════════════════════════════════════════════════════
 # Complete

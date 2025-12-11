@@ -108,7 +108,7 @@ metadata:
   name: ${CLUSTER_NAME}
 servers: 1
 agents: 1
-image: rancher/k3s:v1.31.2-k3s1
+image: rancher/k3s:v1.33.6+k3s1
 kubeAPI:
   hostIP: "0.0.0.0"
   hostPort: "6444"

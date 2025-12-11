@@ -40,14 +40,18 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Default to GCP if not specified
 PLATFORM_ENV="${PLATFORM_ENV:-}"
 
-# Load configuration
-if [[ -f "${PROJECT_ROOT}/configs/.env" ]]; then
+# Load configuration (prefer environment-specific, fall back to generic)
+if [[ -f "${PROJECT_ROOT}/configs/.env.gcp" ]] && [[ "${PLATFORM_ENV:-gcp}" == "gcp" ]]; then
+    source "${PROJECT_ROOT}/configs/.env.gcp"
+elif [[ -f "${PROJECT_ROOT}/configs/.env.local" ]] && [[ "${PLATFORM_ENV:-}" == "local" ]]; then
+    source "${PROJECT_ROOT}/configs/.env.local"
+elif [[ -f "${PROJECT_ROOT}/configs/.env" ]]; then
     source "${PROJECT_ROOT}/configs/.env"
 elif [[ -n "${PLATFORM_ENV}" ]]; then
     log_warn "No configs/.env found, using environment variables"
 else
-    log_error "Configuration file not found: configs/.env"
-    log_info "Copy configs/.env.example (GCP) or configs/.env.local.example (local) to configs/.env"
+    log_error "Configuration file not found: configs/.env.gcp, configs/.env.local, or configs/.env"
+    log_info "Copy configs/.env.example to configs/.env.gcp (GCP) or configs/.env.local.example to configs/.env.local"
     exit 1
 fi
 

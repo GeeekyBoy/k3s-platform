@@ -11,7 +11,7 @@ kubeAPI:
   host: "localhost"
   hostIP: "127.0.0.1"
   hostPort: "6443"
-image: rancher/k3s:v1.34.2-k3s1
+image: rancher/k3s:v1.33.6+k3s1
 network: k3s-network
 volumes:
   # Mount local apps directory for Tilt sync
