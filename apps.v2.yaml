@@ -1,0 +1,212 @@
+# K3s Platform - Application Configuration v2
+# ==============================================================================
+# This file is the single source of truth for all deployments.
+#
+# Schema: schemas/apps-schema.json
+# Validate with: k3sapp validate -f apps.yaml
+#
+# Environments:
+#   - local: Local development with k3d + Tilt hot-reload
+#   - dev:   Staging/dev environment
+#   - gcp:   Production on GCP
+#
+# Deployment Types:
+#   - helm:       Third-party Helm charts (databases, etc.)
+#   - serverless: k3sfn functions with scale-to-zero
+#   - apps:       Traditional container applications (via k3sapp)
+#   - compose:    Docker Compose projects (via k3scompose)
+#
+# CLI Tools:
+#   - k3sfn:      Serverless functions CLI
+#   - k3sapp:     Traditional apps CLI
+#   - k3scompose: Docker Compose projects CLI
+# ==============================================================================
+
+version: "2"
+
+# Global defaults
+defaults:
+  namespace: apps
+  registry:
+    local: ""
+    dev: ""
+    gcp: "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/apps"
+  ingress:
+    local: traefik
+    dev: traefik
+    gcp: haproxy
+
+# Environment-specific settings
+environments:
+  local:
+    domain: localhost
+    debug: true
+  dev:
+    domain: dev.example.com
+    debug: true
+  gcp:
+    domain: prod.example.com
+    tls: true
+    tls_secret: tls-secret
+
+# Helm Charts (third-party services)
+helm:
+  - name: valkey
+    chart: bitnami/valkey
+    version: "5.0.10"
+    namespace: apps
+    values: apps/valkey/values.yaml
+    enabled: true
+
+# Serverless Functions (k3sfn with @http, @queue, @schedule decorators)
+serverless:
+  - name: serverless-example
+    path: apps/serverless-example
+    namespace: apps
+    enabled: true
+    local:
+      port_base: 8081
+      live_update: true
+    gcp:
+      replicas: 0  # Scale to zero
+
+# Traditional Container Apps (Dockerfile-based, managed by k3sapp)
+apps:
+  - name: fastapi
+    path: apps/fastapi
+    namespace: apps
+    enabled: true
+
+    # Build configuration
+    build:
+      dockerfile: Dockerfile
+      dockerfile_dev: Dockerfile.dev
+      context: .
+
+    # Container configuration
+    container:
+      ports:
+        - name: http
+          container_port: 8080
+          service_port: 80
+          protocol: TCP
+
+    # Resource defaults
+    resources:
+      memory: 256Mi
+      cpu: 100m
+      memory_limit: 512Mi
+
+    # Autoscaling
+    scaling:
+      type: keda-http
+      min_instances: 0
+      max_instances: 10
+      target_pending_requests: 100
+      cooldown_period: 300
+
+    # Health checks
+    probes:
+      startup:
+        type: http
+        path: /health
+        port: 8080
+        initial_delay: 5
+        period: 5
+        failure_threshold: 30
+      readiness:
+        type: http
+        path: /health
+        port: 8080
+        period: 10
+        timeout: 1
+      liveness:
+        type: http
+        path: /health
+        port: 8080
+        period: 30
+        timeout: 5
+
+    # Ingress
+    ingress:
+      enabled: true
+      path: /fastapi
+      path_type: Prefix
+      strip_prefix: true
+      timeouts:
+        connect: 10s
+        server: 180s
+        client: 180s
+
+    # Security
+    security:
+      visibility: public
+      network_policy:
+        enabled: true
+      pod_security_context:
+        run_as_non_root: true
+        run_as_user: 1000
+        run_as_group: 1000
+      container_security_context:
+        allow_privilege_escalation: false
+        read_only_root_filesystem: true
+        capabilities:
+          drop:
+            - ALL
+
+    # Environment variables
+    environment:
+      LOG_LEVEL: INFO
+    env_from:
+      - type: secret
+        name: app-secrets
+        optional: true
+
+    # Environment-specific overrides
+    local:
+      port: 8000
+      live_update: true
+      sync:
+        - src: src/
+          dest: /app/src/
+      scaling:
+        type: none
+      replicas: 1
+      environment:
+        LOG_LEVEL: DEBUG
+
+    dev:
+      replicas: 1
+      scaling:
+        type: hpa
+        min_instances: 1
+        max_instances: 3
+        target_cpu_percent: 80
+
+    gcp:
+      replicas: 0
+      scaling:
+        type: keda-http
+        min_instances: 0
+        max_instances: 20
+      pod_disruption_budget:
+        min_available: 1
+      ingress_annotations:
+        haproxy-ingress.github.io/rate-limit-connections: "100"
+
+# Docker Compose Projects (managed by k3scompose)
+# compose:
+#   - name: my-compose-project
+#     path: apps/my-compose-project
+#     file: docker-compose.yaml
+#     namespace: apps
+#     enabled: true
+#     local:
+#       replicas: 1
+#     gcp:
+#       enabled: false
+
+# Helm Repository URLs
+repositories:
+  bitnami: oci://registry-1.docker.io/bitnamicharts
+  kedacore: https://kedacore.github.io/charts

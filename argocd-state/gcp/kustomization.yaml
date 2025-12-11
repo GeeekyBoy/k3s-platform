@@ -5,6 +5,7 @@ kind: Kustomization
 resources:
   - project.yaml
   - fastapi-app.yaml
+  - postgresql-compose.yaml
   - serverless-example-serverless.yaml
   - valkey.yaml
 

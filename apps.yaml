@@ -127,6 +127,26 @@ apps:
       pod_disruption_budget:
         min_available: 1
 
+# Docker Compose Projects (k3scompose)
+compose:
+  - name: postgresql
+    path: apps/postgresql
+    compose_file: docker-compose.yaml
+    namespace: apps
+    enabled: true
+    services:
+      postgres:
+        resources:
+          memory: "256Mi"
+          cpu: "100m"
+          memory_limit: "512Mi"
+        volumes:
+          - name: postgres-data
+            type: pvc
+            size: 1Gi
+            storage_class: standard
+            mount_path: /var/lib/postgresql/data
+
 # Helm Repository URLs
 repositories:
   bitnami: oci://registry-1.docker.io/bitnamicharts

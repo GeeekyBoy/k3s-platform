@@ -1,0 +1,38 @@
+# Auto-generated - DO NOT EDIT. Regenerate with: ./scripts/generate-argocd-state.sh gcp
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgresql
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: k3s-platform
+    environment: gcp
+    type: compose
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: k3s-platform
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+  source:
+    repoURL: https://github.com/GeeekyBoy/k3s-platform.git
+    targetRevision: HEAD
+    path: argocd-state/gcp/compose/postgresql
+    directory:
+      recurse: false
+      include: 'manifests.yaml'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: apps
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true
