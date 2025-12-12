@@ -60,13 +60,12 @@ def _build_env_vars(
     app: AppConfig,
     env: Environment,
 ) -> List[Dict[str, Any]]:
-    """Build environment variables list."""
+    """Build environment variables list (literal values only, not secrets)."""
     env_vars = []
 
-    # Direct values
-    effective_env = app.get_effective_environment(env)
-    for key, value in effective_env.items():
-        env_vars.append({"name": key, "value": str(value)})
+    # Get literal env vars (excludes secrets, performs ${VAR} substitution)
+    for key, value in app.get_literal_env_vars(env).items():
+        env_vars.append({"name": key, "value": value})
 
     return env_vars
 
@@ -197,6 +196,11 @@ def generate_deployment(
     if resources.cpu_limit:
         container["resources"]["limits"]["cpu"] = resources.cpu_limit
 
+    # Ephemeral storage
+    if resources.ephemeral_storage:
+        container["resources"]["requests"]["ephemeral-storage"] = resources.ephemeral_storage
+        container["resources"]["limits"]["ephemeral-storage"] = resources.ephemeral_storage
+
     # Command/args
     if app.container.command:
         container["command"] = app.container.command
@@ -209,6 +213,15 @@ def generate_deployment(
         container["env"] = env_vars
 
     env_from = _build_env_from(app)
+
+    # Add secretRef for ESO-synced secrets (non-local environments only)
+    if env != Environment.LOCAL and app.get_secret_refs():
+        env_from.append({
+            "secretRef": {
+                "name": f"{name}-secrets",
+            }
+        })
+
     if env_from:
         container["envFrom"] = env_from
 
@@ -794,7 +807,7 @@ def generate_network_policy(
     config: AppsYamlConfig,
 ) -> Optional[Dict[str, Any]]:
     """
-    Generate Kubernetes NetworkPolicy manifest.
+    Generate Kubernetes NetworkPolicy manifest with ingress and egress.
 
     Args:
         app: App configuration
@@ -813,43 +826,7 @@ def generate_network_policy(
 
     ingress_rules = []
 
-    # Allow from ingress controller based on visibility
-    if app.security.visibility == Visibility.PUBLIC:
-        if ingress_type == "haproxy":
-            # Allow from HAProxy namespace
-            ingress_rules.append({
-                "from": [
-                    {
-                        "namespaceSelector": {
-                            "matchLabels": {
-                                "kubernetes.io/metadata.name": "haproxy-ingress",
-                            },
-                        },
-                    },
-                ],
-                "ports": [{"protocol": "TCP", "port": primary_port.container_port}],
-            })
-        else:
-            # Allow from Traefik in kube-system
-            ingress_rules.append({
-                "from": [
-                    {
-                        "namespaceSelector": {
-                            "matchLabels": {
-                                "kubernetes.io/metadata.name": "kube-system",
-                            },
-                        },
-                        "podSelector": {
-                            "matchLabels": {
-                                "app.kubernetes.io/name": "traefik",
-                            },
-                        },
-                    },
-                ],
-                "ports": [{"protocol": "TCP", "port": primary_port.container_port}],
-            })
-
-    # Always allow KEDA for scaling
+    # Always allow KEDA for scaling (needed for scale-to-zero HTTP functions)
     ingress_rules.append({
         "from": [
             {
@@ -897,11 +874,57 @@ def generate_network_policy(
                 "ports": [{"protocol": "TCP", "port": primary_port.container_port}],
             })
 
-    return {
+    # Egress rules
+    egress_rules = []
+    policy_types = ["Ingress"]
+
+    # Check if egress rules are needed
+    if app.security.network_policy.allow_to:
+        policy_types.append("Egress")
+
+        # Always allow DNS (kube-dns) for service discovery
+        egress_rules.append({
+            "to": [
+                {
+                    "namespaceSelector": {},
+                    "podSelector": {
+                        "matchLabels": {
+                            "k8s-app": "kube-dns",
+                        },
+                    },
+                },
+            ],
+            "ports": [
+                {"protocol": "UDP", "port": 53},
+                {"protocol": "TCP", "port": 53},
+            ],
+        })
+
+        # Custom allow_to rules
+        for rule in app.security.network_policy.allow_to:
+            to_spec: Dict[str, Any] = {}
+
+            if rule.namespace:
+                to_spec["namespaceSelector"] = {
+                    "matchLabels": {
+                        "kubernetes.io/metadata.name": rule.namespace,
+                    },
+                }
+            if rule.pod_labels:
+                to_spec["podSelector"] = {"matchLabels": rule.pod_labels}
+            if rule.cidr:
+                to_spec["ipBlock"] = {"cidr": rule.cidr}
+
+            if to_spec:
+                egress_rules.append({
+                    "to": [to_spec],
+                })
+
+    network_policy: Dict[str, Any] = {
         "apiVersion": "networking.k8s.io/v1",
         "kind": "NetworkPolicy",
         "metadata": {
-            "name": f"{name}-ingress",
+            "name": f"{name}-policy",
             "namespace": app.namespace,
             "labels": {
                 "app": name,
@@ -915,10 +938,16 @@ def generate_network_policy(
                     "app": name,
                 },
             },
-            "policyTypes": ["Ingress"],
+            "policyTypes": policy_types,
             "ingress": ingress_rules,
         },
     }
+
+    # Add egress rules if present
+    if egress_rules:
+        network_policy["spec"]["egress"] = egress_rules
+
+    return network_policy
 
 
 def generate_pdb(
@@ -973,6 +1002,45 @@ def generate_pdb(
     }
 
 
+def generate_service_account(
+    app: AppConfig,
+    env: Environment,
+) -> Optional[Dict[str, Any]]:
+    """
+    Generate Kubernetes ServiceAccount manifest.
+
+    Args:
+        app: App configuration
+        env: Target environment
+
+    Returns:
+        ServiceAccount manifest dict or None if not creating service account
+    """
+    if not app.security.create_service_account:
+        return None
+
+    if not app.security.service_account:
+        return None
+
+    sa: Dict[str, Any] = {
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {
+            "name": app.security.service_account,
+            "namespace": app.namespace,
+            "labels": {
+                "k3sapp.io/app": app.name,
+            },
+        },
+    }
+
+    # Add annotations (e.g., for GCP Workload Identity)
+    if app.security.service_account_annotations:
+        sa["metadata"]["annotations"] = app.security.service_account_annotations
+
+    return sa
+
+
 def generate_pvc(vol: VolumeConfig, namespace: str) -> Dict[str, Any]:
     """
     Generate PersistentVolumeClaim for PVC volumes.
@@ -1003,6 +1071,259 @@ def generate_pvc(vol: VolumeConfig, namespace: str) -> Dict[str, Any]:
     }
 
 
+def generate_trigger_authentication(
+    app: AppConfig,
+    env: Environment,
+) -> Optional[Dict[str, Any]]:
+    """
+    Generate KEDA TriggerAuthentication for Redis/Valkey queue scaling.
+
+    Args:
+        app: App configuration
+        env: Target environment
+
+    Returns:
+        TriggerAuthentication manifest dict or None if not using queue scaling
+    """
+    scaling = app.get_effective_scaling(env)
+    if scaling.type != ScalingType.KEDA_QUEUE:
+        return None
+
+    name = _to_k8s_name(app.name)
+
+    return {
+        "apiVersion": "keda.sh/v1alpha1",
+        "kind": "TriggerAuthentication",
+        "metadata": {
+            "name": f"{name}-redis-auth",
+            "namespace": app.namespace,
+            "labels": {
+                "app": name,
+                "k3sapp.io/app": app.name,
+            },
+        },
+        "spec": {
+            "secretTargetRef": [
+                {
+                    "parameter": "password",
+                    "name": "valkey-secret",  # Platform-level secret
+                    "key": "password",
+                },
+            ],
+        },
+    }
+
+
+def generate_keda_scaledobject_queue(
+    app: AppConfig,
+    env: Environment,
+) -> Optional[Dict[str, Any]]:
+    """
+    Generate KEDA ScaledObject for Redis/Valkey queue scaling.
+
+    Args:
+        app: App configuration
+        env: Target environment
+
+    Returns:
+        ScaledObject manifest dict or None if not using queue scaling
+    """
+    scaling = app.get_effective_scaling(env)
+    if scaling.type != ScalingType.KEDA_QUEUE:
+        return None
+
+    if not scaling.queue_name:
+        return None
+
+    name = _to_k8s_name(app.name)
+
+    return {
+        "apiVersion": "keda.sh/v1alpha1",
+        "kind": "ScaledObject",
+        "metadata": {
+            "name": f"{name}-queue",
+            "namespace": app.namespace,
+            "labels": {
+                "app": name,
+                "k3sapp.io/app": app.name,
+            },
+        },
+        "spec": {
+            "scaleTargetRef": {
+                "name": name,
+                "kind": "Deployment",
+            },
+            "pollingInterval": 15,
+            "cooldownPeriod": scaling.cooldown_period,
+            "minReplicaCount": scaling.min_instances,
+            "maxReplicaCount": scaling.max_instances,
+            "triggers": [
+                {
+                    "type": "redis",
+                    "metadata": {
+                        "address": "valkey-master.valkey.svc.cluster.local:6379",
+                        "listName": scaling.queue_name,
+                        "listLength": str(scaling.queue_length),
+                        "enableTLS": "false",
+                        "databaseIndex": "0",
+                    },
+                    "authenticationRef": {
+                        "name": f"{name}-redis-auth",
+                    },
+                },
+            ],
+        },
+    }
+
+
+def generate_keda_scaledobject_cron(
+    app: AppConfig,
+    env: Environment,
+) -> Optional[Dict[str, Any]]:
+    """
+    Generate KEDA ScaledObject for cron-based scaling.
+
+    Args:
+        app: App configuration
+        env: Target environment
+
+    Returns:
+        ScaledObject manifest dict or None if not using cron scaling
+    """
+    scaling = app.get_effective_scaling(env)
+    if scaling.type != ScalingType.KEDA_CRON:
+        return None
+
+    name = _to_k8s_name(app.name)
+
+    # Build cron triggers from configured schedules
+    triggers = []
+    if scaling.cron_schedules:
+        # Use configured cron schedules
+        for schedule in scaling.cron_schedules:
+            triggers.append({
+                "type": "cron",
+                "metadata": {
+                    "timezone": schedule.timezone,
+                    "start": schedule.start,
+                    "end": schedule.end,
+                    "desiredReplicas": str(schedule.replicas),
+                },
+            })
+    else:
+        # Fallback to default schedule (8 AM - 6 PM UTC)
+        triggers.append({
+            "type": "cron",
+            "metadata": {
+                "timezone": "UTC",
+                "start": "0 8 * * *",  # 8 AM
+                "end": "0 18 * * *",   # 6 PM
+                "desiredReplicas": str(scaling.max_instances),
+            },
+        })
+
+    return {
+        "apiVersion": "keda.sh/v1alpha1",
+        "kind": "ScaledObject",
+        "metadata": {
+            "name": f"{name}-cron",
+            "namespace": app.namespace,
+            "labels": {
+                "app": name,
+                "k3sapp.io/app": app.name,
+            },
+        },
+        "spec": {
+            "scaleTargetRef": {
+                "name": name,
+                "kind": "Deployment",
+            },
+            "cooldownPeriod": scaling.cooldown_period,
+            "minReplicaCount": scaling.min_instances,
+            "maxReplicaCount": scaling.max_instances,
+            "triggers": triggers,
+        },
+    }
+
+
+def generate_external_secret(
+    app: AppConfig,
+    env: Environment,
+) -> Optional[Dict[str, Any]]:
+    """
+    Generate ExternalSecret for apps with secret references.
+
+    Uses External Secrets Operator to fetch secrets from GCP Secret Manager
+    (or other providers) at runtime.
+
+    Args:
+        app: App configuration
+        env: Target environment
+
+    Returns:
+        ExternalSecret manifest dict or None if no secrets configured
+    """
+    from .types import SecretProvider
+
+    secret_refs = app.get_secret_refs()
+    if not secret_refs:
+        return None
+
+    # Skip for local environment - use .env files directly
+    if env == Environment.LOCAL:
+        return None
+
+    name = _to_k8s_name(app.name)
+
+    # Group secrets by provider - currently only GCP supported
+    gcp_secrets = {
+        k: v for k, v in secret_refs.items()
+        if v.provider == SecretProvider.GCP
+    }
+
+    if not gcp_secrets:
+        return None
+
+    data = []
+    for env_key, ref in gcp_secrets.items():
+        entry: Dict[str, Any] = {
+            "secretKey": env_key,
+            "remoteRef": {
+                "key": ref.secret,
+            },
+        }
+        if ref.version != "latest":
+            entry["remoteRef"]["version"] = ref.version
+        if ref.key:
+            entry["remoteRef"]["property"] = ref.key
+        data.append(entry)
+
+    return {
+        "apiVersion": "external-secrets.io/v1beta1",
+        "kind": "ExternalSecret",
+        "metadata": {
+            "name": f"{name}-secrets",
+            "namespace": app.namespace,
+            "labels": {
+                "app": name,
+                "k3sapp.io/app": app.name,
+            },
+        },
+        "spec": {
+            "refreshInterval": "1h",
+            "secretStoreRef": {
+                "kind": "ClusterSecretStore",
+                "name": "gcp-secret-manager",
+            },
+            "target": {
+                "name": f"{name}-secrets",
+                "creationPolicy": "Owner",
+            },
+            "data": data,
+        },
+    }
+
+
 def generate_all_manifests(
     app: AppConfig,
     env: Environment,
@@ -1026,6 +1347,17 @@ def generate_all_manifests(
     # Container image
     image = resolve_registry_url(app, env, config)
 
+    # ExternalSecret (before Deployment so secrets are available)
+    external_secret = generate_external_secret(app, env)
+    if external_secret:
+        manifests.append(external_secret)
+
+    # ServiceAccount (before Deployment)
+    if app.security.create_service_account:
+        sa = generate_service_account(app, env)
+        if sa:
+            manifests.append(sa)
+
     # Core resources
     manifests.append(generate_deployment(app, env, image, config))
     manifests.append(generate_service(app, env))
@@ -1040,6 +1372,20 @@ def generate_all_manifests(
         hpa = generate_hpa(app, env)
         if hpa:
             manifests.append(hpa)
+    elif scaling.type == ScalingType.KEDA_QUEUE:
+        # TriggerAuthentication for Redis auth
+        trigger_auth = generate_trigger_authentication(app, env)
+        if trigger_auth:
+            manifests.append(trigger_auth)
+        # ScaledObject for queue-based scaling
+        queue_so = generate_keda_scaledobject_queue(app, env)
+        if queue_so:
+            manifests.append(queue_so)
+    elif scaling.type == ScalingType.KEDA_CRON:
+        # ScaledObject for cron-based scaling
+        cron_so = generate_keda_scaledobject_cron(app, env)
+        if cron_so:
+            manifests.append(cron_so)
 
     # Ingress
     manifests.extend(generate_ingress(app, env, config))

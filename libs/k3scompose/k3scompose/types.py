@@ -24,6 +24,86 @@ class RestartPolicy(str, Enum):
     NO = "no"
 
 
+class SecretProvider(str, Enum):
+    """Supported secret providers for External Secrets Operator."""
+    GCP = "gcp"
+    AWS = "aws"
+    VAULT = "vault"
+    AZURE = "azure"
+
+
+@dataclass
+class SecretRef:
+    """Reference to an external secret."""
+    secret: str  # Secret name/path in provider
+    provider: SecretProvider = SecretProvider.GCP
+    version: str = "latest"
+    key: Optional[str] = None  # For multi-value secrets
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "SecretRef":
+        provider_str = data.get("provider", "gcp")
+        return cls(
+            secret=data["secret"],
+            provider=SecretProvider(provider_str),
+            version=data.get("version", "latest"),
+            key=data.get("key"),
+        )
+
+
+@dataclass
+class EgressRule:
+    """Egress NetworkPolicy rule for allow_to configuration."""
+    namespace: Optional[str] = None
+    pod_labels: Dict[str, str] = field(default_factory=dict)
+    cidr: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "EgressRule":
+        return cls(
+            namespace=data.get("namespace"),
+            pod_labels=data.get("pod_labels", {}),
+            cidr=data.get("cidr"),
+        )
+
+
+@dataclass
+class NetworkPolicyConfig:
+    """Network policy configuration for compose services."""
+    enabled: bool = False
+    allow_to: List[EgressRule] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict]) -> "NetworkPolicyConfig":
+        if not data:
+            return cls()
+        allow_to = [EgressRule.from_dict(r) for r in data.get("allow_to", [])]
+        return cls(
+            enabled=data.get("enabled", False),
+            allow_to=allow_to,
+        )
+
+
+@dataclass
+class SecurityConfig:
+    """Security configuration for compose services."""
+    service_account: Optional[str] = None
+    create_service_account: bool = False
+    service_account_annotations: Dict[str, str] = field(default_factory=dict)
+    network_policy: NetworkPolicyConfig = field(default_factory=NetworkPolicyConfig)
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict]) -> "SecurityConfig":
+        if not data:
+            return cls()
+        return cls(
+            service_account=data.get("service_account"),
+            create_service_account=data.get("create_service_account", False),
+            service_account_annotations=data.get("service_account_annotations", {}),
+            network_policy=NetworkPolicyConfig.from_dict(data.get("network_policy")),
+        )
+
+
 @dataclass
 class PortMapping:
     """Port mapping configuration."""
@@ -356,6 +436,7 @@ class ComposeOverrides:
     resources: Optional[Dict[str, str]] = None
     scaling: Optional[Dict[str, Any]] = None
     environment: Dict[str, str] = field(default_factory=dict)
+    security: Optional[SecurityConfig] = None
 
     @classmethod
     def from_dict(cls, data: Optional[Dict]) -> "ComposeOverrides":
@@ -371,6 +452,7 @@ class ComposeOverrides:
             resources=data.get("resources"),
             scaling=data.get("scaling"),
             environment=data.get("environment", {}),
+            security=SecurityConfig.from_dict(data.get("security")),
         )
 
 
@@ -382,6 +464,7 @@ class ComposeConfig:
     file: str = "docker-compose.yaml"
     namespace: str = "apps"
     enabled: bool = True
+    security: Optional[SecurityConfig] = None
 
     # Environment-specific overrides
     local: Optional[ComposeOverrides] = None
@@ -397,10 +480,20 @@ class ComposeConfig:
             file=data.get("file", "docker-compose.yaml"),
             namespace=data.get("namespace", "apps"),
             enabled=data.get("enabled", True),
+            security=SecurityConfig.from_dict(data.get("security")),
             local=ComposeOverrides.from_dict(data.get("local")),
             dev=ComposeOverrides.from_dict(data.get("dev")),
             gcp=ComposeOverrides.from_dict(data.get("gcp")),
         )
+
+    def get_effective_security(self, env: Environment) -> SecurityConfig:
+        """Get security config with environment override."""
+        override = self.get_env_override(env)
+        if override and override.security:
+            return override.security
+        if self.security:
+            return self.security
+        return SecurityConfig()
 
     def get_env_override(self, env: Environment) -> Optional[ComposeOverrides]:
         """Get environment-specific override."""

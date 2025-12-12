@@ -3,7 +3,7 @@ Type definitions for K3s Functions SDK
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable, Union
 from enum import Enum
 
 
@@ -12,6 +12,89 @@ class TriggerType(Enum):
     QUEUE = "queue"
     SCHEDULE = "schedule"
     EVENT = "event"
+
+
+class SecretProvider(str, Enum):
+    """Supported secret providers for External Secrets Operator."""
+    GCP = "gcp"
+    AWS = "aws"
+    VAULT = "vault"
+    AZURE = "azure"
+
+
+@dataclass
+class SecretRef:
+    """Reference to an external secret."""
+    secret: str  # Secret name/path in provider
+    provider: SecretProvider = SecretProvider.GCP
+    version: str = "latest"
+    key: Optional[str] = None  # For multi-value secrets
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "SecretRef":
+        provider_str = data.get("provider", "gcp")
+        return cls(
+            secret=data["secret"],
+            provider=SecretProvider(provider_str),
+            version=data.get("version", "latest"),
+            key=data.get("key"),
+        )
+
+
+@dataclass
+class EnvironmentValue:
+    """Environment variable value - either literal string or secret reference."""
+    value: Optional[str] = None  # Literal or ${VAR} reference
+    secret_ref: Optional[SecretRef] = None  # Secret reference
+
+    @classmethod
+    def from_value(cls, data: Any) -> "EnvironmentValue":
+        if isinstance(data, str):
+            return cls(value=data)
+        elif isinstance(data, dict) and "secret" in data:
+            return cls(secret_ref=SecretRef.from_dict(data))
+        else:
+            raise ValueError(f"Invalid environment value: {data}")
+
+    def is_secret(self) -> bool:
+        return self.secret_ref is not None
+
+
+@dataclass
+class EgressRule:
+    """Egress NetworkPolicy rule for allow_to configuration."""
+    namespace: Optional[str] = None
+    pod_labels: Dict[str, str] = field(default_factory=dict)
+    cidr: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "EgressRule":
+        return cls(
+            namespace=data.get("namespace"),
+            pod_labels=data.get("pod_labels", {}),
+            cidr=data.get("cidr"),
+        )
+
+
+@dataclass
+class SecurityConfig:
+    """Security configuration for serverless functions."""
+    service_account: Optional[str] = None
+    create_service_account: bool = False
+    service_account_annotations: Dict[str, str] = field(default_factory=dict)
+    allow_to: List[EgressRule] = field(default_factory=list)  # Egress rules
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict]) -> "SecurityConfig":
+        if not data:
+            return cls()
+        allow_to = [EgressRule.from_dict(r) for r in data.get("allow_to", [])]
+        return cls(
+            service_account=data.get("service_account"),
+            create_service_account=data.get("create_service_account", False),
+            service_account_annotations=data.get("service_account_annotations", {}),
+            allow_to=allow_to,
+        )
 
 
 class Visibility(Enum):
@@ -37,6 +120,7 @@ class ResourceSpec:
     cpu: str = "100m"
     memory_limit: Optional[str] = None
     cpu_limit: Optional[str] = None
+    ephemeral_storage: Optional[str] = None  # e.g. "10Gi"
 
     def __post_init__(self):
         # Default limits to 2x requests if not specified
@@ -100,6 +184,7 @@ class FunctionMetadata:
     labels: Dict[str, str] = field(default_factory=dict)
     visibility: Visibility = Visibility.PRIVATE  # Default to private (secure by default)
     access_rules: Optional[AccessRule] = None  # For RESTRICTED visibility
+    security: SecurityConfig = field(default_factory=SecurityConfig)  # ServiceAccount, egress rules
 
 
 @dataclass

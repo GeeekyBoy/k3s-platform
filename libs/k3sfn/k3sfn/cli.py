@@ -15,7 +15,51 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from .decorators import FunctionRegistry
-from .types import FunctionMetadata, TriggerType, Visibility
+from .types import (
+    FunctionMetadata,
+    TriggerType,
+    Visibility,
+    SecretRef,
+    SecurityConfig,
+    EgressRule,
+)
+
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+
+def _build_resources(func: FunctionMetadata) -> Dict[str, Any]:
+    """Build resource requests and limits for a function, including ephemeral storage."""
+    resources: Dict[str, Any] = {
+        "requests": {
+            "memory": func.resources.memory,
+            "cpu": func.resources.cpu,
+        },
+        "limits": {
+            # Memory limit prevents OOM kills
+            "memory": func.resources.memory_limit,
+            # CPU limit intentionally omitted for burstable QoS
+            # This allows CPU burst during cold start, reducing latency
+        },
+    }
+
+    # Ephemeral storage (for temp files, logs, etc)
+    if func.resources.ephemeral_storage:
+        resources["requests"]["ephemeral-storage"] = func.resources.ephemeral_storage
+        resources["limits"]["ephemeral-storage"] = func.resources.ephemeral_storage
+
+    return resources
+
+
+def _to_k8s_name(name: str) -> str:
+    """Convert name to valid K8s resource name."""
+    import re
+    name = re.sub(r"[^a-z0-9-]", "-", name.lower())
+    name = name.strip("-")
+    name = re.sub(r"-+", "-", name)
+    return name[:63]
 
 
 # ============================================================================
@@ -305,18 +349,7 @@ def generate_deployment(
                             "args": args,
                             "ports": [{"containerPort": 8080}],
                             "env": env_vars,
-                            "resources": {
-                                "requests": {
-                                    "memory": func.resources.memory,
-                                    "cpu": func.resources.cpu,
-                                },
-                                "limits": {
-                                    # Memory limit prevents OOM kills
-                                    "memory": func.resources.memory_limit,
-                                    # CPU limit intentionally omitted for burstable QoS
-                                    # This allows CPU burst during cold start, reducing latency
-                                },
-                            },
+                            "resources": _build_resources(func),
                             # Startup probe: Allow up to 60s for cold start (30 attempts * 2s)
                             # This prevents liveness probe from killing pod during slow startup
                             "startupProbe": {
@@ -353,7 +386,22 @@ def generate_deployment(
         },
     }
 
-    # Add secret volumes if specified
+    # Add ServiceAccount if configured
+    if func.security.service_account:
+        deployment["spec"]["template"]["spec"]["serviceAccountName"] = func.security.service_account
+
+    # Add envFrom secretRef if function has secrets (synced by ESO)
+    if func.secrets:
+        env_from = [
+            {
+                "secretRef": {
+                    "name": f"{name}-secrets",
+                }
+            }
+        ]
+        deployment["spec"]["template"]["spec"]["containers"][0]["envFrom"] = env_from
+
+    # Add secret volumes if specified (legacy: mounted as files)
     if func.secrets:
         volumes = []
         volume_mounts = []
@@ -361,7 +409,7 @@ def generate_deployment(
             vol_name = secret.replace("_", "-").lower()
             volumes.append({
                 "name": vol_name,
-                "secret": {"secretName": secret},
+                "secret": {"secretName": f"{name}-secrets"},
             })
             volume_mounts.append({
                 "name": vol_name,
@@ -596,15 +644,22 @@ def generate_network_policy(
     - INTERNAL: Allow from any namespace in cluster
     - PRIVATE: Only allow from same namespace
     - RESTRICTED: Only allow from specific pods/namespaces
+
+    Also generates egress rules if func.security.allow_to is specified.
     """
     name = f"{app_name}-{func.name}".replace("_", "-").lower()
 
+    # Determine policy types (add Egress if allow_to rules are specified)
+    policy_types = ["Ingress"]
+    if func.security.allow_to:
+        policy_types.append("Egress")
+
     # Base policy structure
-    policy = {
+    policy: Dict[str, Any] = {
         "apiVersion": "networking.k8s.io/v1",
         "kind": "NetworkPolicy",
         "metadata": {
-            "name": f"{name}-ingress",
+            "name": f"{name}-policy",
             "namespace": namespace,
             "labels": {
                 "app": name,
@@ -619,7 +674,7 @@ def generate_network_policy(
                     "app": name,
                 },
             },
-            "policyTypes": ["Ingress"],
+            "policyTypes": policy_types,
             "ingress": [],
         },
     }
@@ -714,7 +769,139 @@ def generate_network_policy(
         if func.trigger_type == TriggerType.HTTP:
             policy["spec"]["ingress"].append(keda_rule)
 
+    # Build egress rules if allow_to is specified
+    if func.security.allow_to:
+        egress_rules: List[Dict[str, Any]] = []
+
+        # Always allow DNS (kube-dns) for service discovery
+        egress_rules.append({
+            "to": [
+                {
+                    "namespaceSelector": {},
+                    "podSelector": {
+                        "matchLabels": {
+                            "k8s-app": "kube-dns",
+                        },
+                    },
+                },
+            ],
+            "ports": [
+                {"protocol": "UDP", "port": 53},
+                {"protocol": "TCP", "port": 53},
+            ],
+        })
+
+        # Add custom allow_to rules
+        for rule in func.security.allow_to:
+            to_spec: Dict[str, Any] = {}
+
+            if rule.namespace:
+                to_spec["namespaceSelector"] = {
+                    "matchLabels": {
+                        "kubernetes.io/metadata.name": rule.namespace,
+                    },
+                }
+            if rule.pod_labels:
+                to_spec["podSelector"] = {"matchLabels": rule.pod_labels}
+            if rule.cidr:
+                to_spec["ipBlock"] = {"cidr": rule.cidr}
+
+            if to_spec:
+                egress_rules.append({
+                    "to": [to_spec],
+                })
+
+        policy["spec"]["egress"] = egress_rules
+
     return policy
+
+
+def generate_service_account(
+    func: FunctionMetadata,
+    app_name: str,
+    namespace: str = "apps",
+) -> Optional[Dict]:
+    """Generate Kubernetes ServiceAccount for a function with optional annotations."""
+    if not func.security.create_service_account:
+        return None
+
+    if not func.security.service_account:
+        return None
+
+    name = func.security.service_account
+
+    sa: Dict[str, Any] = {
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": {
+                "k3sfn.io/app": app_name,
+                "k3sfn.io/function": func.name,
+            },
+        },
+    }
+
+    # Add annotations (e.g., for GCP Workload Identity)
+    if func.security.service_account_annotations:
+        sa["metadata"]["annotations"] = func.security.service_account_annotations
+
+    return sa
+
+
+def generate_external_secret(
+    func: FunctionMetadata,
+    app_name: str,
+    namespace: str = "apps",
+) -> Optional[Dict]:
+    """Generate ExternalSecret for functions with secret environment variables."""
+    # Check if any environment variables are secret references
+    # For now, serverless functions use the secrets list instead of typed environment
+    # This is a placeholder for future ESO integration
+    if not func.secrets:
+        return None
+
+    name = f"{app_name}-{func.name}".replace("_", "-").lower()
+
+    # Generate ExternalSecret data entries from secrets list
+    data = []
+    for secret_name in func.secrets:
+        data.append({
+            "secretKey": secret_name,
+            "remoteRef": {
+                "key": secret_name,
+            },
+        })
+
+    if not data:
+        return None
+
+    return {
+        "apiVersion": "external-secrets.io/v1beta1",
+        "kind": "ExternalSecret",
+        "metadata": {
+            "name": f"{name}-secrets",
+            "namespace": namespace,
+            "labels": {
+                "app": name,
+                "k3sfn.io/app": app_name,
+                "k3sfn.io/function": func.name,
+            },
+        },
+        "spec": {
+            "refreshInterval": "1h",
+            "secretStoreRef": {
+                "kind": "ClusterSecretStore",
+                "name": "gcp-secret-manager",
+            },
+            "target": {
+                "name": f"{name}-secrets",
+                "creationPolicy": "Owner",
+            },
+            "data": data,
+        },
+    }
 
 
 def generate_host_rewrite_middleware(
@@ -1069,6 +1256,18 @@ def generate_all_manifests(
     all_manifests = []
 
     for func in functions:
+        # Generate ServiceAccount first (before Deployment references it)
+        sa = generate_service_account(func, app_name, namespace)
+        if sa:
+            all_manifests.append(sa)
+            print(f"  Generated ServiceAccount for {func.name}")
+
+        # Generate ExternalSecret for secrets (before Deployment references it)
+        es = generate_external_secret(func, app_name, namespace)
+        if es:
+            all_manifests.append(es)
+            print(f"  Generated ExternalSecret for {func.name}")
+
         if func.trigger_type == TriggerType.SCHEDULE:
             # Scheduled functions only need CronJob, no Deployment/Service
             cj = generate_cronjob(func, app_name, namespace, registry=registry)

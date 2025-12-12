@@ -1,0 +1,996 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://k3s-platform.io/schemas/apps-v2.json",
+  "title": "K3s Platform Apps Configuration",
+  "description": "Schema for apps.yaml v2 - unified configuration for K3s platform deployments",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": ["2"],
+      "description": "Schema version"
+    },
+    "defaults": {
+      "$ref": "#/$defs/defaults"
+    },
+    "environments": {
+      "$ref": "#/$defs/environments"
+    },
+    "helm": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/helmChart"
+      }
+    },
+    "serverless": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/serverlessApp"
+      }
+    },
+    "apps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/traditionalApp"
+      }
+    },
+    "gateway": {
+      "$ref": "#/$defs/gateway"
+    },
+    "compose": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/composeProject"
+      }
+    },
+    "kustomize": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/kustomizeApp"
+      }
+    },
+    "repositories": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Helm repository URLs"
+    }
+  },
+  "$defs": {
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "default": "apps"
+        },
+        "registry": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "local": { "type": "string" },
+            "dev": { "type": "string" },
+            "gcp": { "type": "string" }
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "local": { "type": "string", "enum": ["traefik", "haproxy", "nginx"] },
+            "dev": { "type": "string", "enum": ["traefik", "haproxy", "nginx"] },
+            "gcp": { "type": "string", "enum": ["traefik", "haproxy", "nginx"] }
+          }
+        }
+      }
+    },
+    "environments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "local": { "$ref": "#/$defs/environmentConfig" },
+        "dev": { "$ref": "#/$defs/environmentConfig" },
+        "gcp": { "$ref": "#/$defs/environmentConfig" }
+      }
+    },
+    "environmentConfig": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "domain": { "type": "string" },
+        "tls": { "type": "boolean" },
+        "tls_secret": { "type": "string" },
+        "debug": { "type": "boolean" }
+      }
+    },
+    "secretRef": {
+      "type": "object",
+      "description": "Reference to an external secret for runtime fetching via External Secrets Operator",
+      "required": ["secret"],
+      "additionalProperties": false,
+      "properties": {
+        "secret": {
+          "type": "string",
+          "description": "Secret name/path in the provider (e.g., 'db-password' or 'projects/my-proj/secrets/db-password')"
+        },
+        "provider": {
+          "type": "string",
+          "enum": ["gcp", "aws", "vault", "azure"],
+          "default": "gcp",
+          "description": "Secret provider (defaults to gcp)"
+        },
+        "version": {
+          "type": "string",
+          "default": "latest",
+          "description": "Secret version (defaults to 'latest')"
+        },
+        "key": {
+          "type": "string",
+          "description": "Key within secret if it contains multiple values (JSON)"
+        }
+      }
+    },
+    "environmentValue": {
+      "description": "Environment variable value - either a literal string, ${VAR} reference, or secret reference object",
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Literal value or ${VAR} reference for compile-time substitution"
+        },
+        {
+          "$ref": "#/$defs/secretRef"
+        }
+      ]
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "memory": {
+          "type": "string",
+          "pattern": "^[0-9]+(Mi|Gi|Ki|M|G|K)?$",
+          "description": "Memory request (e.g., 256Mi, 1Gi)"
+        },
+        "cpu": {
+          "type": "string",
+          "pattern": "^[0-9]+(m)?$",
+          "description": "CPU request (e.g., 100m, 1)"
+        },
+        "memory_limit": {
+          "type": "string",
+          "pattern": "^[0-9]+(Mi|Gi|Ki|M|G|K)?$"
+        },
+        "cpu_limit": {
+          "type": "string",
+          "pattern": "^[0-9]+(m)?$"
+        },
+        "ephemeral_storage": {
+          "type": "string",
+          "pattern": "^[0-9]+(Mi|Gi|Ki|M|G|K)?$"
+        }
+      }
+    },
+    "scaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["hpa", "keda-http", "keda-queue", "keda-cron", "none"],
+          "default": "keda-http"
+        },
+        "min_instances": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "max_instances": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10
+        },
+        "target_pending_requests": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "For keda-http: target concurrent requests per pod"
+        },
+        "queue_name": {
+          "type": "string",
+          "description": "For keda-queue: queue name to monitor"
+        },
+        "queue_length": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "For keda-queue: target queue length per pod"
+        },
+        "target_cpu_percent": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "For HPA: target CPU utilization"
+        },
+        "target_memory_percent": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "For HPA: target memory utilization"
+        },
+        "cooldown_period": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 300,
+          "description": "Seconds to wait before scaling down"
+        },
+        "scale_up_stabilization": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "scale_down_stabilization": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 300
+        }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["http", "tcp", "exec"],
+          "default": "http"
+        },
+        "path": {
+          "type": "string",
+          "description": "HTTP path for http probe"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "command": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Command for exec probe"
+        },
+        "initial_delay": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "period": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "success_threshold": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "failure_threshold": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3
+        }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startup": { "$ref": "#/$defs/probe" },
+        "readiness": { "$ref": "#/$defs/probe" },
+        "liveness": { "$ref": "#/$defs/probe" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "class": {
+          "type": "string",
+          "description": "Ingress class (auto-detected if not set)"
+        },
+        "path": {
+          "type": "string",
+          "description": "URL path prefix"
+        },
+        "path_type": {
+          "type": "string",
+          "enum": ["Prefix", "Exact", "ImplementationSpecific"],
+          "default": "Prefix"
+        },
+        "strip_prefix": {
+          "type": "boolean",
+          "default": false,
+          "description": "Remove path prefix before forwarding"
+        },
+        "rewrite_target": {
+          "type": "string",
+          "description": "Rewrite path to this value"
+        },
+        "hosts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "secret": { "type": "string" },
+            "hosts": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "timeouts": {
+          "type": "object",
+          "properties": {
+            "connect": { "type": "string" },
+            "server": { "type": "string" },
+            "client": { "type": "string" },
+            "queue": { "type": "string" }
+          }
+        },
+        "rate_limit": {
+          "type": "object",
+          "properties": {
+            "requests_per_second": { "type": "integer" },
+            "burst": { "type": "integer" }
+          }
+        },
+        "cors": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "allow_origins": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "allow_methods": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "allow_headers": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "networkPolicyRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": { "type": "string" },
+        "pod_labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "cidr": { "type": "string" }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "allow_from": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/networkPolicyRule" }
+        },
+        "allow_to": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/networkPolicyRule" }
+        },
+        "ingress": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/networkPolicyRule" }
+              },
+              "ports": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "protocol": { "type": "string", "enum": ["TCP", "UDP"] },
+                    "port": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "egress": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "to": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/networkPolicyRule" }
+              },
+              "ports": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "protocol": { "type": "string", "enum": ["TCP", "UDP"] },
+                    "port": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_as_non_root": { "type": "boolean" },
+        "run_as_user": { "type": "integer" },
+        "run_as_group": { "type": "integer" },
+        "fs_group": { "type": "integer" },
+        "seccomp_profile": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "enum": ["RuntimeDefault", "Localhost", "Unconfined"] }
+          }
+        }
+      }
+    },
+    "containerSecurityContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow_privilege_escalation": { "type": "boolean" },
+        "read_only_root_filesystem": { "type": "boolean" },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "drop": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "add": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "visibility": {
+          "type": "string",
+          "enum": ["internal", "private", "restricted"],
+          "default": "private"
+        },
+        "allowed_sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/networkPolicyRule" }
+        },
+        "network_policy": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "$ref": "#/$defs/networkPolicy" }
+          ]
+        },
+        "service_account": { "type": "string" },
+        "create_service_account": { "type": "boolean" },
+        "service_account_annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "pod_security_context": { "$ref": "#/$defs/podSecurityContext" },
+        "container_security_context": { "$ref": "#/$defs/containerSecurityContext" }
+      }
+    },
+    "volume": {
+      "type": "object",
+      "required": ["name", "type", "mount_path"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["emptyDir", "pvc", "secret", "configmap"]
+        },
+        "mount_path": { "type": "string" },
+        "read_only": { "type": "boolean" },
+        "medium": {
+          "type": "string",
+          "enum": ["", "Memory"]
+        },
+        "size_limit": { "type": "string" },
+        "size": { "type": "string" },
+        "storage_class": { "type": "string" },
+        "access_modes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany"]
+          }
+        },
+        "secret_name": { "type": "string" },
+        "configmap_name": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string" },
+              "path": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "envFrom": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["secret", "configmap"]
+        },
+        "name": { "type": "string" },
+        "secret": { "type": "string" },
+        "configmap": { "type": "string" },
+        "prefix": { "type": "string" },
+        "optional": { "type": "boolean" }
+      }
+    },
+    "port": {
+      "type": "object",
+      "required": ["container_port"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "container_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "service_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "protocol": {
+          "type": "string",
+          "enum": ["TCP", "UDP"],
+          "default": "TCP"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dockerfile": { "type": "string", "default": "Dockerfile" },
+        "dockerfile_dev": { "type": "string" },
+        "context": { "type": "string", "default": "." },
+        "target": { "type": "string" },
+        "args": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "container": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ports": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/port" }
+        },
+        "working_dir": { "type": "string" }
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["helm", "serverless", "apps", "compose"]
+        }
+      }
+    },
+    "sync": {
+      "type": "object",
+      "required": ["src", "dest"],
+      "additionalProperties": false,
+      "properties": {
+        "src": { "type": "string" },
+        "dest": { "type": "string" }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_available": { "type": "integer" },
+        "max_unavailable": { "type": "integer" }
+      }
+    },
+    "antiAffinity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preferred": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "topology_key": { "type": "string" },
+              "weight": { "type": "integer", "minimum": 1, "maximum": 100 }
+            }
+          }
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "topology_key": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "appEnvOverride": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "port": { "type": "integer" },
+        "port_base": { "type": "integer" },
+        "live_update": { "type": "boolean" },
+        "replicas": { "type": "integer" },
+        "resources": { "$ref": "#/$defs/resources" },
+        "scaling": { "$ref": "#/$defs/scaling" },
+        "environment": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "sync": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sync" }
+        },
+        "pod_disruption_budget": { "$ref": "#/$defs/podDisruptionBudget" },
+        "anti_affinity": { "$ref": "#/$defs/antiAffinity" },
+        "ingress_annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "helmChart": {
+      "type": "object",
+      "required": ["name", "chart", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "chart": { "type": "string" },
+        "version": { "type": "string" },
+        "namespace": { "type": "string" },
+        "values": { "type": "string" },
+        "enabled": { "type": "boolean", "default": true },
+        "depends_on": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/dependency" }
+        },
+        "local": { "$ref": "#/$defs/appEnvOverride" },
+        "dev": { "$ref": "#/$defs/appEnvOverride" },
+        "gcp": { "$ref": "#/$defs/appEnvOverride" }
+      }
+    },
+    "serverlessApp": {
+      "type": "object",
+      "required": ["name", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "namespace": { "type": "string" },
+        "enabled": { "type": "boolean", "default": true },
+        "build": { "$ref": "#/$defs/build" },
+        "resources": { "$ref": "#/$defs/resources" },
+        "scaling": { "$ref": "#/$defs/scaling" },
+        "security": { "$ref": "#/$defs/security" },
+        "environment": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/environmentValue" }
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "mount_path": { "type": "string" }
+            }
+          }
+        },
+        "local": { "$ref": "#/$defs/appEnvOverride" },
+        "dev": { "$ref": "#/$defs/appEnvOverride" },
+        "gcp": { "$ref": "#/$defs/appEnvOverride" }
+      }
+    },
+    "traditionalApp": {
+      "type": "object",
+      "required": ["name", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "namespace": { "type": "string" },
+        "enabled": { "type": "boolean", "default": true },
+        "build": { "$ref": "#/$defs/build" },
+        "dockerfile": { "type": "string" },
+        "dockerfile_dev": { "type": "string" },
+        "container": { "$ref": "#/$defs/container" },
+        "resources": { "$ref": "#/$defs/resources" },
+        "scaling": { "$ref": "#/$defs/scaling" },
+        "probes": { "$ref": "#/$defs/probes" },
+        "ingress": { "$ref": "#/$defs/ingress" },
+        "security": { "$ref": "#/$defs/security" },
+        "environment": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/environmentValue" }
+        },
+        "env_from": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/envFrom" }
+        },
+        "volumes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/volume" }
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/dependency" }
+        },
+        "local": { "$ref": "#/$defs/appEnvOverride" },
+        "dev": { "$ref": "#/$defs/appEnvOverride" },
+        "gcp": { "$ref": "#/$defs/appEnvOverride" }
+      }
+    },
+    "composeServiceOverride": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "ingress": { "$ref": "#/$defs/ingress" },
+        "resources": { "$ref": "#/$defs/resources" },
+        "security": { "$ref": "#/$defs/security" },
+        "environment": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/environmentValue" }
+        },
+        "volumes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/volume" }
+        }
+      }
+    },
+    "composeProject": {
+      "type": "object",
+      "required": ["name", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "compose_file": { "type": "string", "default": "docker-compose.yaml" },
+        "namespace": { "type": "string" },
+        "enabled": { "type": "boolean", "default": true },
+        "defaults": {
+          "type": "object",
+          "properties": {
+            "resources": { "$ref": "#/$defs/resources" },
+            "security": { "$ref": "#/$defs/security" }
+          }
+        },
+        "services": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/composeServiceOverride" }
+        },
+        "network": {
+          "type": "object",
+          "properties": {
+            "policy": {
+              "type": "string",
+              "enum": ["none", "permissive", "strict"]
+            },
+            "allow_external": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/networkPolicyRule" }
+            }
+          }
+        },
+        "local": { "$ref": "#/$defs/appEnvOverride" },
+        "dev": { "$ref": "#/$defs/appEnvOverride" },
+        "gcp": { "$ref": "#/$defs/appEnvOverride" }
+      }
+    },
+    "kustomizeApp": {
+      "type": "object",
+      "required": ["name", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "enabled": { "type": "boolean", "default": true }
+      }
+    },
+    "gateway": {
+      "type": "object",
+      "description": "Gateway configuration for external access to internal services",
+      "additionalProperties": false,
+      "properties": {
+        "routes": {
+          "type": "array",
+          "description": "List of routes mapping external paths to internal services",
+          "items": { "$ref": "#/$defs/gatewayRoute" }
+        },
+        "rate_limit": {
+          "type": "object",
+          "description": "Global rate limiting configuration",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "requests_per_second": { "type": "integer", "minimum": 1 },
+            "burst": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "cors": {
+          "type": "object",
+          "description": "Global CORS configuration",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "allow_origins": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "allow_methods": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "allow_headers": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "expose_headers": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "max_age": { "type": "integer" }
+          }
+        },
+        "waf": {
+          "type": "object",
+          "description": "Web Application Firewall configuration",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "rules": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "gatewayRoute": {
+      "type": "object",
+      "description": "A route mapping an external path to an internal service",
+      "required": ["path", "service"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "External path prefix (e.g., /api/users)"
+        },
+        "service": {
+          "type": "string",
+          "description": "Internal service name (e.g., myapp.apps or myapp.apps.svc.cluster.local)"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 80,
+          "description": "Service port"
+        },
+        "strip_prefix": {
+          "type": "boolean",
+          "default": false,
+          "description": "Remove path prefix before forwarding to service"
+        },
+        "rewrite_to": {
+          "type": "string",
+          "description": "Rewrite path to this value (e.g., /v2)"
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+          },
+          "description": "Allowed HTTP methods (all methods allowed if not specified)"
+        },
+        "timeouts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "connect": { "type": "string", "description": "Connection timeout (e.g., 10s)" },
+            "server": { "type": "string", "description": "Server response timeout (e.g., 180s)" },
+            "client": { "type": "string", "description": "Client timeout (e.g., 180s)" }
+          }
+        },
+        "rate_limit": {
+          "type": "object",
+          "description": "Per-route rate limiting (overrides global)",
+          "additionalProperties": false,
+          "properties": {
+            "requests_per_second": { "type": "integer", "minimum": 1 },
+            "burst": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "auth": {
+          "type": "object",
+          "description": "Authentication configuration for this route",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "type": {
+              "type": "string",
+              "enum": ["none", "basic", "bearer", "api_key"],
+              "default": "none"
+            }
+          }
+        }
+      }
+    }
+  }
+}

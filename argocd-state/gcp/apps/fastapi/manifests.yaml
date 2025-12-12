@@ -87,7 +87,7 @@ spec:
   hosts:
   - fastapi.apps
   pathPrefixes:
-  - /fastapi
+  - /
   scaleTargetRef:
     name: fastapi
     kind: Deployment

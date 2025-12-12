@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "k3sgateway"
+version = "0.1.0"
+description = "K3s Gateway - Generate ingress manifests from apps.yaml gateway configuration"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "K3s Platform Team" },
+]
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+k3sgateway = "k3sgateway.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["k3sgateway"]

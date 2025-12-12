@@ -221,6 +221,38 @@ kubectl rollout status deployment/haproxy-ingress \
 log_success "HAProxy Ingress Controller deployed (single GCP Load Balancer)"
 
 #═══════════════════════════════════════════════════════════════════════════════
+# Deploy External Secrets Operator (for GCP Secret Manager integration)
+#═══════════════════════════════════════════════════════════════════════════════
+log_step "Deploying External Secrets Operator"
+
+log_info "Adding External Secrets Helm repository..."
+helm repo add external-secrets https://charts.external-secrets.io 2>/dev/null || true
+helm repo update external-secrets
+
+log_info "Installing External Secrets Operator..."
+helm upgrade --install external-secrets external-secrets/external-secrets \
+    --namespace external-secrets \
+    --create-namespace \
+    --set installCRDs=true \
+    --set tolerations[0].key=node-role.kubernetes.io/control-plane \
+    --set tolerations[0].operator=Exists \
+    --set tolerations[0].effect=NoSchedule \
+    --set webhook.tolerations[0].key=node-role.kubernetes.io/control-plane \
+    --set webhook.tolerations[0].operator=Exists \
+    --set webhook.tolerations[0].effect=NoSchedule \
+    --set certController.tolerations[0].key=node-role.kubernetes.io/control-plane \
+    --set certController.tolerations[0].operator=Exists \
+    --set certController.tolerations[0].effect=NoSchedule \
+    --wait
+
+log_info "Waiting for External Secrets Operator to be ready..."
+kubectl rollout status deployment/external-secrets \
+    -n external-secrets \
+    --timeout=180s
+
+log_success "External Secrets Operator deployed"
+
+#═══════════════════════════════════════════════════════════════════════════════
 # Deploy Cluster Autoscaler (VM scaling with min=1)
 #═══════════════════════════════════════════════════════════════════════════════
 log_step "Deploying Cluster Autoscaler"
@@ -335,6 +367,7 @@ echo "  ✓ System Upgrade Controller (zero-downtime upgrades)"
 echo "  ✓ KEDA Autoscaler (pod scale-to-zero)"
 echo "  ✓ KEDA HTTP Add-on (cold-start request buffering)"
 echo "  ✓ HAProxy Ingress Controller (single LB, path-based routing)"
+echo "  ✓ External Secrets Operator (GCP Secret Manager sync)"
 echo "  ✓ Cluster Autoscaler (VM scaling, min=${MIN_WORKERS:-1})"
 echo "  ✓ ArgoCD (GitOps incremental deployments)"
 echo ""

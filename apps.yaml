@@ -1,6 +1,17 @@
+# yaml-language-server: $schema=./schemas/apps-schema.json
 # K3s Platform - Application Configuration v2
 # ==============================================================================
 # This file is the single source of truth for all deployments.
+#
+# SECURITY MODEL:
+#   All apps, serverless functions, and compose services are INTERNAL by default.
+#   They can only be accessed from within the cluster. External access is
+#   controlled through explicit gateway routes defined in the `gateway` section.
+#
+#   Visibility levels:
+#     - internal: Accessible from any pod in any namespace
+#     - private:  Accessible only from pods in the same namespace
+#     - restricted: Accessible only from specific pods/namespaces (via allow_from)
 #
 # Environments:
 #   - dev:   Local development with Tilt hot-reload
@@ -44,7 +55,63 @@ environments:
     tls: true
     tls_secret: "letsencrypt-prod"
 
-# Helm Charts (third-party services)
+# =============================================================================
+# GATEWAY ROUTES
+# =============================================================================
+# All external access to the cluster goes through these routes.
+# This is the ONLY place where paths are exposed publicly.
+# Each route maps an external path to an internal Kubernetes service.
+#
+# The gateway is a simple router that:
+#   - Routes external requests to internal services
+#   - Applies WAF rules, rate limiting, and verification
+#   - Handles TLS termination
+#
+# Path rewriting:
+#   - strip_prefix: true  -> /api/users/* -> /*
+#   - strip_prefix: false -> /api/users/* -> /api/users/*
+#   - rewrite_to: "/v2"   -> /api/users/* -> /v2/*
+# =============================================================================
+gateway:
+  routes:
+    # FastAPI backend
+    - path: /fastapi
+      service: fastapi.apps
+      port: 80
+      strip_prefix: true
+      timeouts:
+        connect: 10s
+        server: 180s
+
+    # Serverless function routes (all route to internal services)
+    - path: /api/hello
+      service: serverless-example-hello-world.apps
+      port: 80
+
+    - path: /api/animal
+      service: serverless-example-random-animal.apps
+      port: 80
+
+    - path: /api/health
+      service: serverless-example-health-check.apps
+      port: 80
+
+  # Rate limiting (applied globally to all routes)
+  rate_limit:
+    enabled: false
+    requests_per_second: 100
+    burst: 200
+
+  # CORS configuration (applied globally)
+  cors:
+    enabled: true
+    allow_origins: ["*"]
+    allow_methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    allow_headers: ["*"]
+
+# =============================================================================
+# HELM CHARTS (third-party services)
+# =============================================================================
 helm:
   - name: valkey
     chart: bitnami/valkey
@@ -53,22 +120,29 @@ helm:
     values: apps/valkey/values.yaml
     enabled: true
 
-# Serverless Functions (k3sfn with @http, @queue, @schedule decorators)
-# Functions are discovered automatically, built, and deployed with scale-to-zero
+# =============================================================================
+# SERVERLESS FUNCTIONS (k3sfn with @http, @queue, @schedule decorators)
+# =============================================================================
+# Functions are discovered automatically, built, and deployed with scale-to-zero.
+# All functions are INTERNAL by default - use gateway routes for external access.
 serverless:
   - name: serverless-example
     path: apps/serverless-example
     namespace: apps
     enabled: true
-    security:
-      visibility: public
+    # Network visibility: internal (default), private, or restricted
+    # Note: "public" is NOT allowed - use gateway routes for external access
+    visibility: internal
     local:
       port_base: 8081
     dev:
       port_base: 8081
       live_update: true
 
-# Traditional Container Apps (k3sapp - Dockerfile-based)
+# =============================================================================
+# TRADITIONAL APPS (k3sapp - Dockerfile-based)
+# =============================================================================
+# All apps are INTERNAL by default - use gateway routes for external access.
 apps:
   - name: fastapi
     path: apps/fastapi
@@ -105,14 +179,11 @@ apps:
         type: http
         path: /health
         port: 8000
-    ingress:
+    # Network visibility: internal (default), private, or restricted
+    # Note: "public" is NOT allowed - use gateway routes for external access
+    visibility: internal
+    network_policy:
       enabled: true
-      path: /fastapi
-      strip_prefix: true
-    security:
-      visibility: public
-      network_policy:
-        enabled: true
     local:
       scaling:
         type: none
@@ -127,13 +198,18 @@ apps:
       pod_disruption_budget:
         min_available: 1
 
-# Docker Compose Projects (k3scompose)
+# =============================================================================
+# DOCKER COMPOSE PROJECTS (k3scompose)
+# =============================================================================
+# All compose services are PRIVATE by default (same namespace only).
 compose:
   - name: postgresql
     path: apps/postgresql
     compose_file: docker-compose.yaml
     namespace: apps
     enabled: true
+    # Network visibility for compose services
+    visibility: private
     services:
       postgres:
         resources:

@@ -13,8 +13,13 @@ from .types import (
     ComposeProject,
     ComposeService,
     ComposeVolume,
+    EgressRule,
     Environment,
+    NetworkPolicyConfig,
     RestartPolicy,
+    SecretProvider,
+    SecretRef,
+    SecurityConfig,
     VolumeMount,
 )
 
@@ -560,11 +565,241 @@ def generate_pvc(
     return pvc
 
 
+def generate_service_account(
+    config: ComposeConfig,
+    env: Environment,
+) -> Optional[Dict[str, Any]]:
+    """
+    Generate Kubernetes ServiceAccount manifest.
+
+    Args:
+        config: Compose config with security settings
+        env: Target environment
+
+    Returns:
+        ServiceAccount manifest dict or None if not needed
+    """
+    security = config.get_effective_security(env)
+
+    if not security.create_service_account:
+        return None
+
+    if not security.service_account:
+        return None
+
+    namespace = config.get_effective_namespace(env)
+    project_name = _to_k8s_name(config.name)
+
+    sa: Dict[str, Any] = {
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {
+            "name": security.service_account,
+            "namespace": namespace,
+            "labels": {
+                "k3scompose.io/project": project_name,
+            },
+        },
+    }
+
+    # Add annotations (e.g., for GCP Workload Identity)
+    if security.service_account_annotations:
+        sa["metadata"]["annotations"] = security.service_account_annotations
+
+    return sa
+
+
+def generate_network_policy(
+    service: ComposeService,
+    project: ComposeProject,
+    config: ComposeConfig,
+    env: Environment,
+) -> Optional[Dict[str, Any]]:
+    """
+    Generate Kubernetes NetworkPolicy manifest with ingress and egress rules.
+
+    Args:
+        service: Compose service
+        project: Parent compose project
+        config: Compose config with security settings
+        env: Target environment
+
+    Returns:
+        NetworkPolicy manifest dict or None if not enabled
+    """
+    security = config.get_effective_security(env)
+
+    if not security.network_policy.enabled:
+        return None
+
+    namespace = config.get_effective_namespace(env)
+    name = _to_k8s_name(service.name)
+    project_name = _to_k8s_name(project.name)
+
+    # Determine primary port
+    primary_port = 80
+    if service.ports:
+        primary_port = service.ports[0].container_port
+
+    # Build ingress rules - allow from same namespace by default
+    ingress_rules = [
+        {
+            "from": [{"podSelector": {}}],  # Any pod in same namespace
+            "ports": [{"protocol": "TCP", "port": primary_port}],
+        }
+    ]
+
+    # Build egress rules
+    egress_rules: List[Dict[str, Any]] = []
+    policy_types = ["Ingress"]
+
+    # Always allow DNS (kube-dns) for service discovery
+    egress_rules.append({
+        "to": [
+            {
+                "namespaceSelector": {},
+                "podSelector": {
+                    "matchLabels": {
+                        "k8s-app": "kube-dns",
+                    },
+                },
+            },
+        ],
+        "ports": [
+            {"protocol": "UDP", "port": 53},
+            {"protocol": "TCP", "port": 53},
+        ],
+    })
+
+    # Add custom allow_to rules
+    if security.network_policy.allow_to:
+        policy_types.append("Egress")
+
+        for rule in security.network_policy.allow_to:
+            to_spec: Dict[str, Any] = {}
+
+            if rule.namespace:
+                to_spec["namespaceSelector"] = {
+                    "matchLabels": {
+                        "kubernetes.io/metadata.name": rule.namespace,
+                    },
+                }
+            if rule.pod_labels:
+                to_spec["podSelector"] = {"matchLabels": rule.pod_labels}
+            if rule.cidr:
+                to_spec["ipBlock"] = {"cidr": rule.cidr}
+
+            if to_spec:
+                egress_rules.append({
+                    "to": [to_spec],
+                })
+
+    network_policy: Dict[str, Any] = {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+            "name": f"{name}-policy",
+            "namespace": namespace,
+            "labels": {
+                "app": name,
+                "k3scompose.io/project": project_name,
+                "k3scompose.io/service": service.name,
+            },
+        },
+        "spec": {
+            "podSelector": {
+                "matchLabels": {
+                    "app": name,
+                },
+            },
+            "policyTypes": policy_types,
+            "ingress": ingress_rules,
+        },
+    }
+
+    if "Egress" in policy_types:
+        network_policy["spec"]["egress"] = egress_rules
+
+    return network_policy
+
+
+def generate_external_secret(
+    config: ComposeConfig,
+    env: Environment,
+    secret_refs: Dict[str, SecretRef],
+) -> Optional[Dict[str, Any]]:
+    """
+    Generate ExternalSecret for compose projects with secret references.
+
+    Args:
+        config: Compose config
+        env: Target environment
+        secret_refs: Dict of env var name to SecretRef
+
+    Returns:
+        ExternalSecret manifest dict or None if no secrets
+    """
+    if not secret_refs:
+        return None
+
+    # Skip for local environment (use .env files directly)
+    if env == Environment.LOCAL:
+        return None
+
+    namespace = config.get_effective_namespace(env)
+    name = _to_k8s_name(config.name)
+
+    # Group secrets by provider (currently only GCP supported)
+    gcp_secrets = {k: v for k, v in secret_refs.items() if v.provider == SecretProvider.GCP}
+
+    if not gcp_secrets:
+        return None
+
+    data = []
+    for env_key, ref in gcp_secrets.items():
+        entry: Dict[str, Any] = {
+            "secretKey": env_key,
+            "remoteRef": {
+                "key": ref.secret,
+            },
+        }
+        if ref.version != "latest":
+            entry["remoteRef"]["version"] = ref.version
+        if ref.key:
+            entry["remoteRef"]["property"] = ref.key
+        data.append(entry)
+
+    return {
+        "apiVersion": "external-secrets.io/v1beta1",
+        "kind": "ExternalSecret",
+        "metadata": {
+            "name": f"{name}-secrets",
+            "namespace": namespace,
+            "labels": {
+                "k3scompose.io/project": name,
+            },
+        },
+        "spec": {
+            "refreshInterval": "1h",
+            "secretStoreRef": {
+                "kind": "ClusterSecretStore",
+                "name": "gcp-secret-manager",
+            },
+            "target": {
+                "name": f"{name}-secrets",
+                "creationPolicy": "Owner",
+            },
+            "data": data,
+        },
+    }
+
+
 def generate_all_manifests(
     project: ComposeProject,
     config: ComposeConfig,
     env: Environment,
     registry: Optional[str] = None,
+    secret_refs: Optional[Dict[str, SecretRef]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Generate all Kubernetes manifests for a compose project.
@@ -574,6 +809,7 @@ def generate_all_manifests(
         config: apps.yaml compose config
         env: Target environment
         registry: Optional container registry
+        secret_refs: Optional dict of env var name to SecretRef for secrets
 
     Returns:
         List of all manifest dicts
@@ -582,8 +818,20 @@ def generate_all_manifests(
     namespace = config.get_effective_namespace(env)
     overrides = config.get_env_override(env)
     project_name = _to_k8s_name(project.name)
+    security = config.get_effective_security(env)
 
-    # Generate PVCs for named volumes first
+    # ServiceAccount (create first, before Deployment references it)
+    sa = generate_service_account(config, env)
+    if sa:
+        manifests.append(sa)
+
+    # ExternalSecret (create before Deployment references it)
+    if secret_refs:
+        es = generate_external_secret(config, env, secret_refs)
+        if es:
+            manifests.append(es)
+
+    # Generate PVCs for named volumes
     for vol_name, vol in project.volumes.items():
         if not vol.external:
             pvc = generate_pvc(vol, namespace, project_name)
@@ -595,11 +843,33 @@ def generate_all_manifests(
         deploy = generate_deployment(
             service, project, namespace, registry, overrides
         )
+
+        # Add ServiceAccount reference if configured
+        if security.service_account:
+            deploy["spec"]["template"]["spec"]["serviceAccountName"] = security.service_account
+
+        # Add envFrom for secrets if configured
+        if secret_refs and env != Environment.LOCAL:
+            name = _to_k8s_name(config.name)
+            env_from = deploy["spec"]["template"]["spec"]["containers"][0].get("envFrom", [])
+            env_from.append({
+                "secretRef": {
+                    "name": f"{name}-secrets",
+                }
+            })
+            deploy["spec"]["template"]["spec"]["containers"][0]["envFrom"] = env_from
+
         manifests.append(deploy)
 
         # Service (if has ports)
         svc = generate_service(service, project, namespace)
         if svc:
             manifests.append(svc)
+
+        # NetworkPolicy (if enabled)
+        if security.network_policy.enabled:
+            netpol = generate_network_policy(service, project, config, env)
+            if netpol:
+                manifests.append(netpol)
 
     return manifests

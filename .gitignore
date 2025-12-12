@@ -14,6 +14,7 @@ k3s.yaml
 
 # GCP credentials
 *.json
+!*-schema.json
 !apps/*/cloudbuild.yaml
 
 # Build artifacts

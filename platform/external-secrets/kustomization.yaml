@@ -1,0 +1,23 @@
+# Kustomization for External Secrets Operator resources
+#
+# This deploys the ClusterSecretStore and ServiceAccount for GCP Secret Manager
+#
+# Usage:
+#   kubectl apply -k platform/external-secrets/
+#
+# Note: Environment variables must be substituted before applying:
+#   envsubst < cluster-secret-store-gcp.yaml | kubectl apply -f -
+#
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: external-secrets
+
+resources:
+  - service-account.yaml
+  # Note: cluster-secret-store-gcp.yaml requires envsubst for variable substitution
+  # Apply it separately with: envsubst < cluster-secret-store-gcp.yaml | kubectl apply -f -
+
+commonLabels:
+  app.kubernetes.io/component: external-secrets
+  app.kubernetes.io/part-of: k3s-platform

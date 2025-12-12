@@ -26,8 +26,15 @@ class ScalingType(str, Enum):
 
 
 class Visibility(str, Enum):
-    """Network visibility/access control."""
-    PUBLIC = "public"
+    """Network visibility/access control.
+
+    Note: PUBLIC visibility is not available. External access is controlled
+    through gateway routes in apps.yaml. All apps are internal by default.
+
+    - INTERNAL: Accessible from any pod in any namespace
+    - PRIVATE: Accessible only from pods in the same namespace
+    - RESTRICTED: Accessible only from specific pods/namespaces (via allow_from)
+    """
     INTERNAL = "internal"
     PRIVATE = "private"
     RESTRICTED = "restricted"
@@ -53,6 +60,83 @@ class ProbeType(str, Enum):
     HTTP = "http"
     TCP = "tcp"
     EXEC = "exec"
+
+
+class SecretProvider(str, Enum):
+    """Secret provider for external secrets."""
+    GCP = "gcp"
+    AWS = "aws"
+    VAULT = "vault"
+    AZURE = "azure"
+
+
+@dataclass
+class SecretRef:
+    """Reference to an external secret.
+
+    Used for runtime secret fetching via External Secrets Operator.
+    """
+    secret: str  # Secret name/path in provider
+    provider: SecretProvider = SecretProvider.GCP
+    version: str = "latest"
+    key: Optional[str] = None  # For multi-value secrets (JSON key)
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "SecretRef":
+        provider = data.get("provider", "gcp")
+        return cls(
+            secret=data["secret"],
+            provider=SecretProvider(provider) if provider else SecretProvider.GCP,
+            version=data.get("version", "latest"),
+            key=data.get("key"),
+        )
+
+
+@dataclass
+class EnvironmentValue:
+    """Environment variable value - either literal string or secret reference.
+
+    Supports three types:
+    - Literal value: "info"
+    - Variable reference: "${VAR}" or "${VAR:-default}"
+    - Secret reference: {"secret": "secret-name", "provider": "gcp"}
+    """
+    value: Optional[str] = None  # Literal or ${VAR} reference
+    secret_ref: Optional[SecretRef] = None  # Secret reference
+
+    @classmethod
+    def from_value(cls, data: Any) -> "EnvironmentValue":
+        if isinstance(data, str):
+            return cls(value=data)
+        elif isinstance(data, dict) and "secret" in data:
+            return cls(secret_ref=SecretRef.from_dict(data))
+        else:
+            raise ValueError(f"Invalid environment value: {data}")
+
+    def is_secret(self) -> bool:
+        """Check if this is a secret reference."""
+        return self.secret_ref is not None
+
+
+@dataclass
+class CronSchedule:
+    """Cron schedule for time-based scaling.
+
+    Used with KEDA Cron scaler for predictable traffic patterns.
+    """
+    timezone: str = "UTC"
+    start: str = "0 8 * * *"   # 8 AM
+    end: str = "0 18 * * *"    # 6 PM
+    replicas: int = 5
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "CronSchedule":
+        return cls(
+            timezone=data.get("timezone", "UTC"),
+            start=data["start"],
+            end=data["end"],
+            replicas=data["replicas"],
+        )
 
 
 @dataclass
@@ -95,12 +179,17 @@ class ScalingConfig:
     cooldown_period: int = 300
     scale_up_stabilization: int = 0
     scale_down_stabilization: int = 300
+    cron_schedules: List[CronSchedule] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Optional[Dict]) -> "ScalingConfig":
         if not data:
             return cls()
         scaling_type = data.get("type", "keda-http")
+        cron_schedules = [
+            CronSchedule.from_dict(s)
+            for s in data.get("cron_schedules", [])
+        ]
         return cls(
             type=ScalingType(scaling_type) if scaling_type else ScalingType.KEDA_HTTP,
             min_instances=data.get("min_instances", 0),
@@ -113,6 +202,7 @@ class ScalingConfig:
             cooldown_period=data.get("cooldown_period", 300),
             scale_up_stabilization=data.get("scale_up_stabilization", 0),
             scale_down_stabilization=data.get("scale_down_stabilization", 300),
+            cron_schedules=cron_schedules,
         )
 
 
@@ -587,8 +677,8 @@ class AppConfig:
     # Security
     security: SecurityConfig = field(default_factory=SecurityConfig)
 
-    # Environment
-    environment: Dict[str, str] = field(default_factory=dict)
+    # Environment (supports both string values and secret references)
+    environment: Dict[str, EnvironmentValue] = field(default_factory=dict)
     env_from: List[EnvFromConfig] = field(default_factory=list)
 
     # Volumes
@@ -619,7 +709,10 @@ class AppConfig:
             probes=ProbesConfig.from_dict(data.get("probes")),
             ingress=IngressConfig.from_dict(data.get("ingress")),
             security=SecurityConfig.from_dict(data.get("security")),
-            environment=data.get("environment", {}),
+            environment={
+                k: EnvironmentValue.from_value(v)
+                for k, v in data.get("environment", {}).items()
+            },
             env_from=env_from,
             volumes=volumes,
             local=AppEnvOverride.from_dict(data.get("local")),
@@ -645,12 +738,50 @@ class AppConfig:
             return override.resources
         return self.resources
 
-    def get_effective_environment(self, env: Environment) -> Dict[str, str]:
-        """Get merged environment variables."""
+    def get_effective_environment(self, env: Environment) -> Dict[str, EnvironmentValue]:
+        """Get merged environment variables (EnvironmentValue objects)."""
         result = dict(self.environment)
         override = self.get_env_override(env)
         if override:
-            result.update(override.environment)
+            # Override environment values are simple strings, wrap them
+            for k, v in override.environment.items():
+                result[k] = EnvironmentValue(value=v)
+        return result
+
+    def get_literal_env_vars(self, env: Environment) -> Dict[str, str]:
+        """Get non-secret environment variables for Deployment.
+
+        Returns only literal string values (not secret references).
+        Performs ${VAR} and ${VAR:-default} substitution from os.environ.
+        """
+        import os
+        import re
+
+        def substitute_env_var(value: str) -> str:
+            """Substitute ${VAR} and ${VAR:-default} patterns."""
+            def replace(match: re.Match) -> str:
+                var_name = match.group(1)
+                default = match.group(3) if match.group(3) else ""
+                return os.environ.get(var_name, default)
+
+            pattern = r'\$\{([A-Z_][A-Z0-9_]*)(:-(.*?))?\}'
+            return re.sub(pattern, replace, value)
+
+        result = {}
+        for key, val in self.get_effective_environment(env).items():
+            if not val.is_secret() and val.value is not None:
+                result[key] = substitute_env_var(val.value)
+        return result
+
+    def get_secret_refs(self) -> Dict[str, SecretRef]:
+        """Get secret references for ExternalSecret generation.
+
+        Returns a dict mapping env var names to their SecretRef objects.
+        """
+        result = {}
+        for key, val in self.environment.items():
+            if val.is_secret() and val.secret_ref is not None:
+                result[key] = val.secret_ref
         return result
 
     def get_primary_port(self) -> PortConfig:
